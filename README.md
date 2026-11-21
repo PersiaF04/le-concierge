@@ -16,7 +16,7 @@
 
 ## Problem
 
-Residential buildings need a modern way to handle visitor access. Traditional intercoms require physical presence and manual verification. Residents miss deliveries and visitors wait unnecessarily. There's no intelligent system that learns resident preferences or handles common scenarios automatically.
+Residential buildings need a cost effective solution for handling visitor access. Traditional intercoms require physical presence and manual verification. Residents miss deliveries and visitors wait unnecessarily. There's no intelligent system that learns resident preferences or handles common scenarios automatically.
 
 ## What It Does
 
