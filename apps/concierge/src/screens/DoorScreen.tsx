@@ -4,12 +4,16 @@ import {
   bytesLabel,
   confidenceLabel,
   distanceLabel,
+  fetchCurrentVisit,
   formatTime,
   msLabel,
+  openLive,
   recordedSpeech,
   recordedVisit,
+  startArrival,
   useTheme,
   useWebcam,
+  type Visit,
 } from "@le-concierge/ui";
 import Face, { gazeFrom } from "../components/Face";
 import { loadDoorShot, saveDoorShot } from "../data";
@@ -21,7 +25,11 @@ import { loadDoorShot, saveDoorShot } from "../data";
 export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void }) {
   const { theme, toggle } = useTheme();
   const camera = useWebcam();
-  const [visit] = useState(recordedVisit);
+  const [visit, setVisit] = useState<Visit>(recordedVisit);
+  /** What the door said: the execution's spoken text wins over the proposal. */
+  const said = visit.speech?.text ?? visit.reply;
+  const [live, setLive] = useState<"off" | "connecting" | "on">(apiMode === "live" ? "connecting" : "off");
+  const [starting, setStarting] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [spoken, setSpoken] = useState(false);
   const [shot, setShot] = useState<string | null>(() => loadDoorShot());
@@ -45,6 +53,60 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
   );
 
   /**
+   * In live mode the door follows whatever the workflow posts for flat 12:
+   * the API broadcasts each visit change over the socket, so the door needs no
+   * polling loop of its own.
+   */
+  useEffect(() => {
+    if (apiMode !== "live") return;
+    let open = true;
+    void fetchCurrentVisit("12").then((current) => {
+      if (!open || current.id === recordedVisit.id) return;
+      setVisit(current);
+    });
+    const socket = openLive("12", (next) => {
+      if (!open) return;
+      setLive("on");
+      setSpoken(false);
+      setVisit({ ...next, mode: "workflow" });
+    });
+    if (socket.transport === "none") setLive("off");
+    else setLive("on");
+    return () => {
+      open = false;
+      socket.close();
+    };
+  }, []);
+
+  /**
+   * The doorbell. A button for now; MediaPipe will press it when it sees a
+   * face (issue #3).
+   */
+  const startVisit = useCallback(async () => {
+    setStarting(true);
+    setNotice(null);
+    const created = await startArrival({
+      flat: "12",
+      snapshot: shot,
+      face: { resident_id: "res_12_persia", distance: 0.31 },
+    });
+    setStarting(false);
+    if (!created) {
+      setNotice("The doorbell could not reach the API. Is it running on :3000?");
+      return;
+    }
+    setSpoken(false);
+    setVisit((previous) => ({
+      ...previous,
+      id: created.visitId,
+      executionId: created.executionId,
+      status: "arriving",
+      mode: "workflow",
+    }));
+    setNotice("A visitor is here. The workflow is running; flat 12 decides on the phone.");
+  }, [shot]);
+
+  /**
    * The face moves for as long as the sentence would take, whether or not this
    * browser has a voice: a silent laptop should still look like it is talking,
    * and the notice says which of the two just happened.
@@ -52,7 +114,7 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
   const speak = useCallback(() => {
     stopSpeech();
     setNotice(null);
-    const words = visit.reply.trim().split(/s+/).length;
+    const words = said.trim().split(/\s+/).length;
     const duration = Math.min(9000, Math.max(1700, words * 340));
     setSpeaking(true);
     talkTimer.current = setTimeout(() => {
@@ -65,7 +127,7 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
       return;
     }
 
-    const utterance = new SpeechSynthesisUtterance(visit.reply);
+    const utterance = new SpeechSynthesisUtterance(said);
     utterance.lang = "en-GB";
     utterance.rate = 0.98;
     utterance.pitch = 0.95;
@@ -80,7 +142,7 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
       setNotice("The voice stopped early, so the subtitles carry the reply.");
     };
     window.speechSynthesis.speak(utterance);
-  }, [stopSpeech, visit.reply]);
+  }, [said, stopSpeech]);
 
   function takePhoto() {
     const data = camera.capture();
@@ -93,8 +155,11 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
     setNotice(null);
   }
 
+  const speech = visit.speech ?? recordedSpeech;
+
   return (
     <div className="kiosk" onPointerMove={(event) => setGaze(gazeFrom(event))}>
+      <div className="door-head">
       <header className="bar">
         <div className="bar-id">
           <p className="mono small muted">the door · flat 12</p>
@@ -118,6 +183,20 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
         </div>
       </header>
 
+      {apiMode === "live" ? (
+        <div className="live-strip" data-live={live}>
+          <p className="mono small">
+            <span className="live-dot" data-live={live} aria-hidden="true" />
+            {live === "on" ? "live · the door is waiting" : live === "connecting" ? "live · connecting" : "live · socket down"}
+          </p>
+          <p className="small muted">Pressed here, answered on the resident's phone.</p>
+          <button type="button" className="btn btn-small" onClick={() => void startVisit()} disabled={starting}>
+            {starting ? "starting the workflow…" : "A visitor is here"}
+          </button>
+        </div>
+      ) : null}
+      </div>
+
       <main className="kiosk-main">
         <div className="kiosk-face">
           <Face speaking={speaking} gaze={gaze} />
@@ -129,12 +208,26 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
         <div className="kiosk-say">
           <div className="say-head">
             <span className="mono small muted">{formatTime(visit.at)} · DPD</span>
-            <span className="stamp" data-status="pending_decision">
-              {spoken ? "answered" : "at the door"}
+            <span className="stamp" data-status={visit.status}>
+              {spoken
+                ? "answered"
+                : visit.status === "approved"
+                  ? "let in"
+                  : visit.status === "declined"
+                    ? "not let in"
+                    : visit.status === "expired"
+                      ? "no answer"
+                      : visit.status === "arriving"
+                        ? "arriving"
+                        : "at the door"}
             </span>
           </div>
-          <blockquote className="visitor">“{visit.transcript}”</blockquote>
-          <p className="reply">{visit.reply}</p>
+          {visit.transcript ? (
+            <blockquote className="visitor">“{visit.transcript}”</blockquote>
+          ) : (
+            <p className="small muted">no intercom audio, so the workflow had nothing to transcribe</p>
+          )}
+          <p className="reply">{said}</p>
           <div className="say-actions">
             <button type="button" className="btn" onClick={speak}>
               {speaking ? "Speaking…" : spoken ? "Say it again" : "Speak the reply"}
@@ -211,29 +304,29 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
         <div className="foot-record speech-record" aria-label="How the reply was spoken">
           <div className="record-line">
             <span>speak_reply</span>
-            <b>{recordedSpeech.transport}</b>
+            <b>{speech.transport}</b>
           </div>
           <div className="record-line">
             <span>model</span>
-            <b>{recordedSpeech.model}</b>
+            <b>{speech.model}</b>
           </div>
           <div className="record-line">
             <span>voice</span>
-            <b>{recordedSpeech.voiceId}</b>
+            <b>{speech.voiceId}</b>
           </div>
           <div className="record-line">
             <span>audio</span>
             <b>
-              {bytesLabel(recordedSpeech.audioBytes)} · {recordedSpeech.chunks} chunks
+              {bytesLabel(speech.audioBytes)} · {speech.chunks} chunks
             </b>
           </div>
           <div className="record-line">
             <span>first chunk</span>
-            <b>{msLabel(recordedSpeech.firstChunkMs)}</b>
+            <b>{msLabel(speech.firstChunkMs)}</b>
           </div>
           <div className="record-line">
-            <span>played at the door</span>
-            <b>{msLabel(recordedSpeech.durationMs)}</b>
+            <span>audio length</span>
+            <b>{msLabel(speech.durationMs)}</b>
           </div>
         </div>
       </footer>

@@ -37,15 +37,34 @@ def _should_record() -> bool:
 
 
 def _text_of(response: Any) -> str:
-    """Pull plain text out of a chat completion, whatever the SDK shape."""
+    """Pull plain text out of a chat completion, whatever the SDK shape.
+
+    Content is either a string or a list of typed parts, depending on the model
+    and on whether the answer was written by the SDK or typed by hand.
+    """
 
     try:
-        return response.choices[0].message.content or ""
+        content = response.choices[0].message.content
     except (AttributeError, IndexError, TypeError):  # pragma: no cover - defensive
         return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, (list, tuple)):
+        parts: list[str] = []
+        for chunk in content:
+            if isinstance(chunk, str):
+                parts.append(chunk)
+            elif isinstance(chunk, dict):
+                parts.append(str(chunk.get("text") or chunk.get("content") or ""))
+            else:
+                parts.append(str(getattr(chunk, "text", "") or ""))
+        return "".join(parts)
+    return str(content or "")
 
 
-def _parse_json(text: str) -> dict[str, Any]:
+def _parse_json(text: Any) -> dict[str, Any]:
+    if not isinstance(text, str):
+        text = json.dumps(text) if isinstance(text, (dict, list)) else str(text)
     cleaned = text.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]

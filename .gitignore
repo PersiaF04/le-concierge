@@ -99,3 +99,9 @@ local.env
 .web-design/app-shots/
 .web-design/directions/*.png
 .web-design/directions/*.jpg
+
+# local TypeScript build caches
+*.tsbuildinfo
+
+# the live-loop driver talks to a machine-local browser install
+.web-design/live-loop.mjs

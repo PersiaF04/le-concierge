@@ -395,3 +395,42 @@
   .log-table th:nth-child(5),
   .log-table td:nth-child(5) { display: none; }
 }
+
+/* The live strip: the doorbell, and whether the socket is up. */
+.door-head {
+  display: grid;
+  gap: var(--s3);
+}
+
+.live-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--rule);
+  padding: 0.4rem 0 0;
+}
+.live-strip p { margin: 0; }
+.live-strip .btn { margin-left: auto; }
+
+.live-dot {
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  margin-right: 0.4rem;
+  background: var(--rule-2);
+  vertical-align: baseline;
+}
+.live-dot[data-live="on"] { background: var(--approve); }
+.live-dot[data-live="connecting"] { background: var(--stamp); }
+.live-dot[data-live="off"] { background: var(--alert); }
+
+.btn-small {
+  font-size: 0.8125rem;
+  padding: 0.3rem 0.7rem;
+}
+
+@media (max-width: 560px) {
+  .live-strip .btn { margin-left: 0; width: 100%; }
+}

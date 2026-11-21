@@ -60,7 +60,7 @@ def load_settings() -> Settings:
     return Settings(
         api_base_url=os.getenv("LE_CONCIERGE_API_URL", "http://localhost:3000").rstrip("/"),
         mistral_api_key=os.getenv("MISTRAL_API_KEY") or None,
-        vision_model=os.getenv("VISION_MODEL", "pixtral-large-latest"),
+        vision_model=os.getenv("VISION_MODEL", "mistral-small-latest"),
         transcription_model=os.getenv("TRANSCRIPTION_MODEL", "voxtral-mini-latest"),
         decision_model=os.getenv("DECISION_MODEL", "mistral-large-latest"),
         # The door speaks through Voxtral's realtime endpoint, so the audio

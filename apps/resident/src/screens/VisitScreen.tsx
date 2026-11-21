@@ -102,7 +102,11 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
 
         <h2 id="entry-title">{waiting ? "Someone is at the door." : "An entry in the log."}</h2>
 
-        <blockquote className="quote">“{visit.transcript}”</blockquote>
+        {visit.transcript ? (
+          <blockquote className="quote">“{visit.transcript}”</blockquote>
+        ) : (
+          <p className="small muted">no intercom audio, so nobody spoke into it</p>
+        )}
 
         <div className="facts">
           <div className="record-line">

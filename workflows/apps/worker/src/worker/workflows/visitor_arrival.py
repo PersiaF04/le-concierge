@@ -103,7 +103,9 @@ async def speak_reply(reply: dict[str, Any]) -> dict[str, Any]:
 
     settings = load_settings()
     audio = await mistral_ai.synthesize_reply(settings, reply["text"])
-    played = await api.speak_at_intercom(settings, audio)
+    # The API attaches what was said to the right visit, so the resident's
+    # screen can show the speech facts of this execution and no other.
+    played = await api.speak_at_intercom(settings, {**audio, "visit_id": reply.get("visit_id")})
     return {
         "text": audio.get("text"),
         "model": audio.get("model"),
@@ -182,7 +184,12 @@ class VisitorArrivalWorkflow:
             "scene": scene,
             "transcript": transcript,
             "face_matched": bool(face.get("matched")),
+            # The phone shows these as they came back from the models, so the
+            # entry on the resident's screen is the execution's own numbers.
+            "face_distance": face.get("distance"),
+            "confidence": choice.get("confidence"),
             "proposed_reply": choice.get("reply_text", ""),
+            "parcel": choice.get("parcel"),
             "recognition": "face-api.js descriptor match, opted-in residents only",
         }
         await post_visit(visit)

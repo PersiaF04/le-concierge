@@ -77,6 +77,26 @@ export async function fetchCurrentVisit(flat: string): Promise<Visit> {
   return visit ? { ...visit, mode: "workflow" } : recordedVisit;
 }
 
+/**
+ * Ask the API to start a visitor-arrival execution. This is the doorbell: the
+ * button the door presses when MediaPipe sees someone (issue #3 will own it).
+ */
+export async function startArrival(input: {
+  flat?: string | null;
+  snapshot?: string | null;
+  face?: Record<string, unknown>;
+}): Promise<{ visitId: string; executionId: string | null } | null> {
+  const created = await json<{ visit_id: string; execution_id: string | null }>("/arrivals", {
+    method: "POST",
+    body: JSON.stringify({
+      flat: input.flat ?? null,
+      snapshot_url: input.snapshot ?? null,
+      face: input.face ?? {},
+    }),
+  });
+  return created ? { visitId: created.visit_id, executionId: created.execution_id } : null;
+}
+
 export async function sendDecision(visitId: string, decision: Decision): Promise<boolean> {
   const response = await json<{ ok: boolean }>(`/visits/${visitId}/decision`, {
     method: "POST",
@@ -121,7 +141,12 @@ export function openLive(
     socket = new WebSocket(`${WS}/live?flat=${encodeURIComponent(flat)}`);
     socket.onmessage = (event) => {
       try {
-        onEvent(JSON.parse(event.data) as Visit);
+        // The API frames every push as { type: "visit", visit }; a bare visit
+        // is still accepted so the two can change shape independently.
+        const frame = JSON.parse(event.data) as { type?: string; visit?: Visit };
+        const visit = frame.visit ?? (frame as unknown as Visit);
+        if (!visit?.id) return;
+        onEvent(visit);
       } catch {
         /* a malformed frame is not worth dropping the socket for */
       }

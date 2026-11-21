@@ -29,7 +29,23 @@ export interface Visit {
   parcel?: { courier: string; label: string } | null;
   snapshot?: string | null;
   decidedAt?: string | null;
+  /** What the door said, attached by the API from the speak_reply activity. */
+  speech?: VisitSpeech | null;
   mode: "workflow" | "mock";
+}
+
+export interface VisitSpeech {
+  text: string;
+  model: string | null;
+  voiceId: string | null;
+  transport: string | null;
+  streamingMode?: string | null;
+  chunks: number | null;
+  firstChunkMs: number | null;
+  audioBytes: number | null;
+  played: boolean;
+  durationMs: number | null;
+  at?: string;
 }
 
 export interface Parcel {
