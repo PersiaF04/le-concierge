@@ -8,7 +8,9 @@ segment when the frames show nobody:
 2. give each person a stable label: a resident's name when the description
    matches, otherwise "Unknown person N" or "Delivery courier N";
 3. write one past-tense log line and its kind;
-4. log it to the API as ``cctv.<kind>``.
+4. Le Chonk (Mistral Large 4) reviews it against the recent events and flags
+   anything suspicious: tailgating, loitering, unanswered doorbell rings;
+5. log it to the API as ``cctv.<kind>``, review included.
 """
 
 from __future__ import annotations
@@ -72,6 +74,13 @@ async def write_event(context: dict[str, Any]) -> dict[str, Any]:
     return await cctv_ai.write_event(load_settings(), context)
 
 
+@workflows.activity(start_to_close_timeout=timedelta(seconds=120), retry_policy_max_attempts=3)
+async def chonk_review_event(context: dict[str, Any]) -> dict[str, Any]:
+    """Le Chonk: {flag, severity, note} for this event, given the recent ones."""
+
+    return await cctv_ai.chonk_review_event(load_settings(), context)
+
+
 @workflows.activity(start_to_close_timeout=timedelta(seconds=30), retry_policy_max_attempts=5)
 async def log_cctv_event(event: dict[str, Any]) -> dict[str, Any]:
     return await api.log_event(load_settings(), event)
@@ -82,7 +91,8 @@ async def log_cctv_event(event: dict[str, Any]) -> dict[str, Any]:
     workflow_display_name="CCTV event",
     workflow_description=(
         "Describes a CCTV segment, labels the people in it, writes one "
-        "past-tense log line and logs it. Discards segments with nobody in them."
+        "past-tense log line, has Le Chonk flag anything suspicious and logs "
+        "it. Discards segments with nobody in them."
     ),
 )
 class CctvEventWorkflow:
@@ -131,5 +141,8 @@ class CctvEventWorkflow:
             "people": names,
             **segment,
         }
+        review = await chonk_review_event({**event, "recent_events": input.recent_events})
+        models["chonk"] = review.get("model")
+        event["review"] = {key: review.get(key) for key in ("flag", "severity", "note")}
         await log_cctv_event({"type": f"cctv.{event['kind']}", **event, "model": models})
         return {"discard": False, "event": event, "model": models}

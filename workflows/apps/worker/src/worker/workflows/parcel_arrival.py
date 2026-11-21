@@ -53,8 +53,8 @@ async def match_flat(label_text: str | None, fallback_flat: str | None) -> dict[
 
 
 @workflows.activity(start_to_close_timeout=timedelta(seconds=120), retry_policy_max_attempts=3)
-async def write_notice(context: dict[str, Any]) -> str:
-    """Le Chonk: the one-line notice the resident reads."""
+async def write_notice(context: dict[str, Any]) -> dict[str, Any]:
+    """Le Chonk (Mistral Large 4): the one-line notice the resident reads."""
 
     instruction = (
         "Write one short, friendly notification (max 200 characters) telling a "
@@ -106,7 +106,8 @@ class ParcelArrivalWorkflow:
             "courier": first_label.get("courier"),
             "scene": scene.get("scene"),
         }
-        message = await write_notice(context)
+        notice = await write_notice(context)
+        message = notice["text"]
 
         notification = {
             "parcel_id": input.parcel_id,
@@ -128,6 +129,7 @@ class ParcelArrivalWorkflow:
             "message": message,
             "delivered": delivered,
             "resident_id": input.resident_id,
+            "model": {"chonk": notice.get("model")},
         }
         await log_event({"type": "parcel.arrival", **result})
         return result

@@ -122,6 +122,29 @@ visitor the resident's answer. A `log_event` tool writes to the timeline. If
 the voice session cannot start, the door falls back to recording six seconds
 and playing the workflow's Voxtral reply. See [docs/api.md](docs/api.md#voice-mistral-voice-agents).
 
+### Which model runs which step
+
+Le Chonk (Mistral Large 4, `CHONK_MODEL=mistral-large-latest`) runs every step
+where nobody is waiting. The live door decision runs on Mistral Small
+(`DECISION_MODEL=mistral-small-latest`), because a visitor is standing at the
+intercom: Large 4 reasons by default and took 74 s, and even
+`reasoning_effort: "low"` took 6.7 to 8.0 s. Large 4 does not accept `"none"`.
+
+| Step | Workflow | Model |
+| --- | --- | --- |
+| `write_digest` | `nightly-digest` | **Le Chonk** (Large 4, `reasoning_effort: "low"`) |
+| `write_notice` | `parcel-arrival` | **Le Chonk** (Large 4, `reasoning_effort: "low"`) |
+| `chonk_review_event`: flags tailgating, loitering, unanswered rings | `cctv-event` | **Le Chonk** (Large 4, `reasoning_effort: "low"`) |
+| The live door conversation (Mistral Voice Agent) | door | Mistral Small with Voxtral (latency at the door) |
+| `decide_visit`: who the visitor is for, what the door says | `visitor-arrival` | Mistral Small (latency at the door) |
+| `label_people`, `write_event` | `cctv-event` | Mistral Small |
+| `describe_snapshot`, `read_label`, `describe_cctv_frames` | all | Mistral Small (vision) |
+| transcription, speech | `visitor-arrival` | Voxtral |
+
+Every Le Chonk step names its model in its output, so Studio shows
+`mistral-large-latest` on those steps. ADR-014 in
+[`docs/decisions.md`](docs/decisions.md) has the timings.
+
 Agents: Le Chonk, inside the activities, runs on the **Mistral Agents SDK**
 (durable agents are being deprecated), so the decision prompt, tools and model
 stay versioned with the workflow that calls them.

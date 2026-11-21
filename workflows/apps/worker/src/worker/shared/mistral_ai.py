@@ -1,11 +1,14 @@
 """Model calls used by the activities.
 
-Three jobs, three models:
+Four jobs:
 
 * the vision model describes the door and reads parcel labels - it never
   identifies anyone;
 * Voxtral transcribes the intercom audio and speaks the reply at the door;
-* Le Chonk (Mistral Large) makes the access decision and writes the copy.
+* the decision model (``DECISION_MODEL``, Small by default) makes the live
+  door decision, where a visitor is waiting;
+* Le Chonk (``CHONK_MODEL``, Mistral Large 4) writes the parcel notice and
+  the digest, and reviews CCTV events, where latency does not matter.
 
 Every function falls back to a recorded fixture when ``WORKFLOWS_REPLAY=1``.
 """
@@ -184,7 +187,7 @@ async def chonk_decide(
     settings: Settings,
     context: dict[str, Any],
 ) -> dict[str, Any]:
-    """Le Chonk: who the visitor is for, and what to say."""
+    """The live door decision (DECISION_MODEL): who the visitor is for, what to say."""
 
     fixture_key = context.get("fixture_key", "chonk_visitor")
     if settings.replay:
@@ -214,19 +217,40 @@ async def chonk_decide(
     return {**result, "model": getattr(response, "model", None) or settings.decision_model}
 
 
+def chonk_complete(settings: Settings, **kwargs: Any) -> Any:
+    """One chat call to Le Chonk, with reasoning limited when configured."""
+
+    if settings.chonk_reasoning_effort:
+        kwargs["reasoning_effort"] = settings.chonk_reasoning_effort
+    return _client(settings).chat.complete(model=settings.chonk_model, **kwargs)
+
+
+def chonk_facts(settings: Settings, response: Any = None) -> dict[str, Any]:
+    """The model and reasoning effort, so Studio shows Le Chonk on the step."""
+
+    return {
+        "model": getattr(response, "model", None) or settings.chonk_model,
+        "reasoning_effort": settings.chonk_reasoning_effort,
+    }
+
+
 async def chonk_write(
     settings: Settings,
     instruction: str,
     context: dict[str, Any],
     fixture_key: str,
-) -> str:
-    """Le Chonk: write resident-facing copy (parcel notice, digest)."""
+) -> dict[str, Any]:
+    """Le Chonk: write resident-facing copy (parcel notice, digest).
+
+    Returns ``{text, model, reasoning_effort}``; a replay adds ``replay: True``.
+    """
 
     if settings.replay:
-        return load_fixture(settings, fixture_key)["text"]
+        text_value = load_fixture(settings, fixture_key)["text"]
+        return {"text": text_value, **chonk_facts(settings), "replay": True}
 
-    response = _client(settings).chat.complete(
-        model=settings.decision_model,
+    response = chonk_complete(
+        settings,
         messages=[
             {
                 "role": "user",
@@ -241,7 +265,7 @@ async def chonk_write(
     text_value = _text_of(response).strip()
     if _should_record():
         save_fixture(settings, fixture_key, {"text": text_value})
-    return text_value
+    return {"text": text_value, **chonk_facts(settings, response)}
 
 
 def _peak_dbfs(samples: list[int]) -> float | None:

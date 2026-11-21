@@ -81,7 +81,7 @@ async def transcribe_intercom_audio(audio_url: str | None) -> dict[str, Any]:
 
 @workflows.activity(start_to_close_timeout=timedelta(seconds=120), retry_policy_max_attempts=3)
 async def decide_visit(context: dict[str, Any]) -> dict[str, Any]:
-    """Le Chonk: who it is for, and what the intercom should say."""
+    """DECISION_MODEL (Small, for latency at the door): who it is for, what to say."""
 
     return await mistral_ai.chonk_decide(load_settings(), context)
 
