@@ -25,6 +25,7 @@ import express from 'express';
 import { WebSocket as Socket, WebSocketServer } from 'ws';
 import { createServer } from 'node:http';
 import { mountVoice, voiceConfigFromEnv } from './voice.js';
+import { mountStage } from './stage.js';
 
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
 const PENDING = new Set(['arriving', 'pending_decision']);
@@ -372,6 +373,8 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
   });
+
+  mountStage(app, { config, fetch: fetchImpl }); // GET /executions/:id/steps, for the demo stage
 
   app.get('/health', (req, res) => {
     res.json({

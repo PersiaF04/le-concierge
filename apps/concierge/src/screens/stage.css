@@ -1,0 +1,146 @@
+/* The demo stage: one 16:9 sheet of the logbook — door, phone, workflow. */
+
+.stage {
+  --stage-w: min(100vw, calc(100vh * 16 / 9));
+  width: var(--stage-w);
+  height: calc(var(--stage-w) * 9 / 16);
+  margin: 0 auto;
+  padding: var(--s4) var(--s5);
+  display: grid;
+  grid-template-columns: 55fr 30fr 15fr;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "top top top"
+    "door phone notes"
+    "strip strip strip";
+  gap: var(--s4) var(--s5);
+  overflow: hidden;
+}
+
+.stage-top {
+  grid-area: top;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s4);
+  border-bottom: 1.5px solid var(--ink);
+  padding-bottom: var(--s2);
+  min-width: 0;
+}
+.stage-top p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.stage-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--step-2);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.stage-health {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-2);
+  background: transparent;
+}
+.stage-health[data-up="true"] { border-color: var(--approve); background: var(--approve); }
+
+.stage-door,
+.stage-phone-wrap,
+.stage-notes { min-width: 0; min-height: 0; }
+
+.stage-door { grid-area: door; border: 1.5px solid var(--ink); }
+.stage iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--paper); }
+
+.stage-phone-wrap {
+  grid-area: phone;
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+}
+.stage-phone {
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: 9 / 19;
+  border: 2.4px solid var(--ink);
+  border-radius: var(--radius-phone);
+  padding: 0.9rem 0.6rem;
+  background: var(--paper);
+}
+.stage-phone iframe { border-radius: 1.2rem; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+
+.stage-notes {
+  grid-area: notes;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  border-left: 1px solid var(--rule);
+  padding-left: var(--s4);
+  overflow: hidden;
+}
+.stage-kicker {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+}
+.stage-words { font-size: var(--step-1); line-height: 1.35; overflow-wrap: anywhere; }
+
+.stage-strip {
+  grid-area: strip;
+  list-style: none;
+  margin: 0;
+  padding: var(--s3) 0 0;
+  border-top: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.stage-step {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 0.15rem;
+  text-align: center;
+  color: var(--ink-2);
+  min-width: 0;
+}
+/* the rule between two steps, drawn from this mark to the next */
+.stage-step + .stage-step::before {
+  content: "";
+  position: absolute;
+  top: 1.25rem;
+  right: calc(50% + 1.5rem);
+  width: calc(100% - 3rem);
+  border-top: 1.5px solid var(--rule-2);
+}
+.stage-step[data-lit="done"]::before,
+.stage-step[data-lit="active"]::before,
+.stage-step[data-lit="waiting"]::before { border-top-color: var(--ink); }
+
+.stage-mark { width: 2.5rem; height: 2.5rem; fill: none; stroke: var(--rule-2); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.stage-dot { fill: currentColor; stroke: none; }
+
+.stage-step-label { font-size: var(--step-0); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.stage-step-n { font-size: 0.6875rem; color: var(--ink-2); }
+.stage-step-model { font-size: 0.6875rem; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+.stage-step[data-lit="done"] { color: var(--ink); }
+.stage-step[data-lit="done"] .stage-mark { stroke: var(--ink); }
+.stage-step[data-lit="active"] { color: var(--stamp); }
+.stage-step[data-lit="active"] .stage-mark { stroke: var(--stamp); }
+.stage-step[data-lit="waiting"] { color: var(--stamp); }
+.stage-step[data-lit="waiting"] .stage-mark { stroke: var(--stamp); animation: stage-pulse 1.2s ease-in-out infinite; }
+.stage-step[data-lit="failed"] { color: var(--alert); }
+.stage-step[data-lit="failed"] .stage-mark { stroke: var(--alert); }
+
+@keyframes stage-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-step[data-lit="waiting"] .stage-mark { animation: none; }
+}
