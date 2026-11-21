@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { confirmThatWasMe, useWebcam, type Resident } from "@le-concierge/ui";
+import { useRef, useState } from "react";
+import type { Resident } from "@le-concierge/ui";
 import { isFlatTaken, saveResident, takenMessage } from "../flats";
 
 export default function MeScreen({
@@ -11,7 +11,6 @@ export default function MeScreen({
   onUpdate: (resident: Resident) => void;
   onForget: () => void;
 }) {
-  const camera = useWebcam();
   const [status, setStatus] = useState<string | null>(null);
   const [name, setName] = useState(resident.name ?? "");
   const [whatsapp, setWhatsapp] = useState(resident.whatsapp ?? "");
@@ -24,32 +23,6 @@ export default function MeScreen({
     const cleaned = value.trim();
     if (!cleaned || cleaned === resident.flat) return;
     if ((await isFlatTaken(cleaned)) && current.current.trim() === cleaned) setTaken(cleaned);
-  }
-
-  // Let go of the camera whenever the page is hidden, so the browser's camera
-  // light goes off; it is only asked for again when the resident taps for it.
-  const { stop: stopCamera } = camera;
-  useEffect(() => {
-    const onHide = () => {
-      if (document.visibilityState === "hidden") stopCamera();
-    };
-    document.addEventListener("visibilitychange", onHide);
-    return () => document.removeEventListener("visibilitychange", onHide);
-  }, [stopCamera]);
-
-  async function enrol() {
-    const shot = camera.shot ?? camera.capture();
-    if (!shot) {
-      setStatus("No frame yet — start the camera and look at it first.");
-      return;
-    }
-    const ok = await confirmThatWasMe(resident.id);
-    setStatus(
-      ok
-        ? "Face saved. This is the portrait the door will match against."
-        : "Held on this device only — the face record is not wired to the workflow yet.",
-    );
-    camera.stop();
   }
 
   return (
@@ -157,61 +130,6 @@ export default function MeScreen({
         </form>
       </section>
 
-      <section className="block">
-        <h3>Face record</h3>
-        <div className="portrait">
-          {camera.shot ? (
-            <img src={camera.shot} alt="The portrait you just took" />
-          ) : camera.state === "live" ? (
-            <video ref={camera.attach} muted playsInline />
-          ) : (
-            <div className="shot-empty" aria-hidden="true">
-              <span className="mono small">portrait — none yet</span>
-            </div>
-          )}
-        </div>
-        <div className="sign-actions">
-          {camera.state !== "live" ? (
-            <button
-              type="button"
-              className="btn-quiet"
-              onClick={() => {
-                camera.reset();
-                void camera.start();
-              }}
-            >
-              {camera.state === "asking" ? "asking for the camera…" : "Use the camera"}
-            </button>
-          ) : null}
-          {camera.state === "live" ? (
-            <button
-              type="button"
-              className="btn"
-              onClick={() => {
-                // The portrait is taken; the camera is not needed any more.
-                camera.capture();
-                camera.stop();
-              }}
-            >
-              Take the portrait
-            </button>
-          ) : null}
-          {camera.state === "live" ? (
-            <button type="button" className="btn-quiet" onClick={camera.stop}>
-              Close the camera
-            </button>
-          ) : null}
-          {camera.shot ? (
-            <button type="button" className="btn-quiet" onClick={() => void enrol()}>
-              Save this face
-            </button>
-          ) : null}
-        </div>
-        {camera.state === "denied" ? (
-          <p className="small muted">Camera refused — you can still stay anonymous and answer at the door.</p>
-        ) : null}
-      </section>
-
       {status ? (
         <p className="small notice" role="status">
           {status}
@@ -227,10 +145,7 @@ export default function MeScreen({
         <button
           type="button"
           className="btn-ghost small danger"
-          onClick={() => {
-            camera.stop();
-            onForget();
-          }}
+          onClick={onForget}
         >
           Forget this device
         </button>

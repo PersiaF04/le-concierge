@@ -164,9 +164,7 @@
 .intercom-shot { margin: 0; display: grid; gap: var(--s2); }
 
 .intercom-shot img,
-.intercom-shot video,
-.portrait img,
-.portrait video {
+.intercom-shot video {
   width: 100%;
   aspect-ratio: 4 / 3;
   object-fit: cover;
@@ -307,8 +305,6 @@
 .parcel-label { font-size: var(--step-0); letter-spacing: 0.02em; }
 
 .inline-form { display: grid; gap: var(--s3); }
-
-.portrait { display: grid; }
 
 .truncate {
   overflow: hidden;
