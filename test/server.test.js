@@ -42,6 +42,7 @@ async function start({ env = { WORKFLOWS_REPLAY: "1", NODE_ENV: "test" }, fetch:
     ws: `ws://127.0.0.1:${port}`,
     get: (path) => call('GET', path),
     post: (path, body = {}) => call('POST', path, body),
+    put: (path, body = {}) => call('PUT', path, body),
     close: async () => {
       await api.close();
       db.close();
@@ -88,22 +89,65 @@ describe('offline API', () => {
 
     const named = await api.post('/residents', {
       name: 'Ada',
-      flat: '12',
+      flat: '14',
       email: 'ada@example.invalid',
       whatsapp: '+440000',
       anonymous: false,
     });
     assert.equal(named.status, 201);
-    assert.match(named.data.id, /^res_12_/);
+    assert.match(named.data.id, /^res_14_/);
     assert.deepEqual(
       { ...named.data, id: undefined },
-      { id: undefined, flat: '12', anonymous: false, name: 'Ada', email: 'ada@example.invalid', whatsapp: '+440000' },
+      { id: undefined, flat: '14', anonymous: false, name: 'Ada', email: 'ada@example.invalid', whatsapp: '+440000' },
     );
 
     const anon = await api.post('/residents', { flat: '7', anonymous: true, email: 'x@example.invalid' });
     assert.equal(anon.status, 201);
     assert.equal(anon.data.anonymous, true);
     assert.equal(anon.data.email, undefined, 'anonymous residents keep no contact details');
+  });
+
+  test('a flat holds one resident: 409 flat_taken, never saying who', async () => {
+    const { data: first } = await api.post('/residents', { name: 'Gil', flat: '90', email: 'gil@example.invalid' });
+    assert.deepEqual((await api.get('/flats/90')).data, { exists: true, hasResident: true });
+
+    // Named or anonymous, a second resident cannot take the flat.
+    const named = await api.post('/residents', { name: 'Hal', flat: '90' });
+    assert.equal(named.status, 409);
+    assert.deepEqual(named.data, { error: 'flat_taken', flat: '90' });
+    const anon = await api.post('/residents', { flat: '090', anonymous: true });
+    assert.deepEqual([anon.status, anon.data], [409, { error: 'flat_taken', flat: '090' }]);
+    // A taken anonymous flat blocks a named resident too.
+    await api.post('/residents', { flat: '91', anonymous: true });
+    assert.equal((await api.post('/residents', { name: 'Ivy', flat: '91' })).status, 409);
+    // An id that is not someone's own does not get past the check.
+    assert.equal((await api.post('/residents', { id: 'nobody', name: 'Jo', flat: '90' })).status, 409);
+
+    // The resident's own id re-registers: an edit keeps the id.
+    const edited = await api.post('/residents', { id: first.id, name: 'Gil B', flat: '90' });
+    assert.equal(edited.status, 200);
+    assert.deepEqual(edited.data, { id: first.id, flat: '90', anonymous: false, name: 'Gil B' });
+  });
+
+  test('changing flat needs a free flat and frees the old one', async () => {
+    const { data: me } = await api.post('/residents', { name: 'Kit', flat: '70' });
+    await api.post('/residents', { name: 'Lou', flat: '71' });
+
+    const blocked = await api.post('/residents', { id: me.id, name: 'Kit', flat: '71' });
+    assert.deepEqual([blocked.status, blocked.data], [409, { error: 'flat_taken', flat: '71' }]);
+    assert.equal((await api.get('/flats/70')).data.hasResident, true, 'a refused move keeps the old flat');
+
+    const moved = await api.post('/residents', { id: me.id, name: 'Kit', flat: '72' });
+    assert.deepEqual([moved.status, moved.data.id, moved.data.flat], [200, me.id, '72']);
+    assert.equal((await api.get('/flats/70')).data.hasResident, false);
+    assert.equal((await api.get('/flats/72')).data.hasResident, true);
+    assert.equal((await api.post('/residents', { name: 'Max', flat: '70' })).status, 201);
+
+    // PUT /residents/:id does the same, and 404s for nobody.
+    const put = await api.put(`/residents/${me.id}`, { flat: '73', anonymous: true });
+    assert.deepEqual([put.status, put.data], [200, { id: me.id, flat: '73', anonymous: true }]);
+    assert.equal((await api.get('/flats/72')).data.hasResident, false);
+    assert.equal((await api.put('/residents/nobody', { flat: '74', anonymous: true })).status, 404);
   });
 
   test('POST /residents/:id/confirm returns {ok}', async () => {
