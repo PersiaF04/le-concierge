@@ -184,7 +184,7 @@ The wav kept for a visit; this is `visit.speech.audioUrl`. `200 audio/wav`, `404
 The phone or the door publishes the picture it just took. Body:
 `{ flat, dataUrl, source?: "resident-phone"|"door", by? }`; `dataUrl` must be a
 `data:image/` URL. The last one per flat is kept and pushed on `/live` as
-`{ type: "snapshot", snapshot }` to that flat's sockets.
+`{ type: "snapshot", snapshot }` to that flat's sockets and to `scope=door` sockets.
 
 `201 { stored: true, snapshot }` (without `dataUrl`), `400` on missing or bad fields.
 
@@ -250,11 +250,19 @@ event today (UTC) is an arrival.
 
 ### Live updates
 
-#### `WS /live?flat=12`
+#### `WS /live?flat=12` and `WS /live?scope=door`
 
-`flat` is required (the socket closes with 1008 without it). On connect the
-socket receives the flat's newest visit, then a frame every time a visit for
-that flat changes, and never one for another flat:
+A socket subscribes one of two ways, and closes with 1008 if it gives neither:
+
+- `?flat=12`, for residents: on connect it receives the flat's newest visit,
+  then a frame every time a visit or photograph for that flat changes, and
+  never one for another flat.
+- `?scope=door`, for the door: the building-wide feed. On connect it receives
+  the newest visit in the building, then every visit frame for every flat,
+  including visits that have no flat yet, and every snapshot frame. If both
+  parameters are given, `scope=door` wins.
+
+Frames:
 
 ```json
 { "type": "visit", "visit": { "id": "visit_…", "flat": "12", "...": "a full Visit" } }
