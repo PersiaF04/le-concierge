@@ -71,6 +71,7 @@ async def test_visitor_activities_use_fixtures() -> None:
     choice = await visitor_arrival.decide_visit({"flat_hint": None})
     assert choice["flat"] == "12"
     assert choice["action"] == "ask"
+    assert choice["model"]  # decide_visit names the decision model in Studio
 
     visited = await visitor_arrival.post_visit({"visit_id": "visit_0001"})
     assert visited["status"] == "pending_resident"
