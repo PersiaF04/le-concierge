@@ -1,0 +1,393 @@
+/**
+ * API tests: every route, against a temporary SQLite file, in offline mode
+ * unless a test injects a fake Mistral to check the live calls.
+ */
+
+import { test, describe, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import WebSocket from 'ws';
+
+import { createApp, configFromEnv } from '../server/app.js';
+import { openDb } from '../server/db.js';
+
+const dirs = [];
+
+async function start({ env = { WORKFLOWS_REPLAY: "1", NODE_ENV: "test" }, fetch: mistralFetch } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'lcv-api-'));
+  dirs.push(dir);
+  const db = openDb(join(dir, 'test.db'));
+  const api = createApp({ db, config: configFromEnv(env), fetch: mistralFetch });
+  await new Promise((resolve) => api.server.listen(0, '127.0.0.1', resolve));
+  const { port } = api.server.address();
+  const base = `http://127.0.0.1:${port}`;
+  const call = async (method, path, body) => {
+    const response = await fetch(`${base}${path}`, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const type = response.headers.get('content-type') || '';
+    const data = type.includes('json') ? await response.json() : Buffer.from(await response.arrayBuffer());
+    return { status: response.status, data };
+  };
+  return {
+    base,
+    ws: `ws://127.0.0.1:${port}`,
+    get: (path) => call('GET', path),
+    post: (path, body = {}) => call('POST', path, body),
+    close: async () => {
+      await api.close();
+      db.close();
+    },
+  };
+}
+
+
+
+after(() => {
+  for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+});
+
+/** Open a socket and collect its frames. */
+function listen(url) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url);
+    const frames = [];
+    socket.on('message', (data) => frames.push(JSON.parse(String(data))));
+    socket.on('open', () => resolve({ socket, frames }));
+    socket.on('error', reject);
+  });
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
+
+describe('offline API', () => {
+  let api;
+  before(async () => {
+    api = await start();
+  });
+  after(() => api.close());
+
+  test('GET /health reports offline mode', async () => {
+    const { status, data } = await api.get('/health');
+    assert.equal(status, 200);
+    assert.equal(data.status, 'ok');
+    assert.equal(data.mode, 'offline');
+  });
+
+  test('POST /residents validates and returns a Resident', async () => {
+    assert.equal((await api.post('/residents', { name: 'Ada' })).status, 400);
+    assert.equal((await api.post('/residents', { flat: '12', anonymous: false })).status, 400);
+
+    const named = await api.post('/residents', {
+      name: 'Ada',
+      flat: '12',
+      email: 'ada@example.invalid',
+      whatsapp: '+440000',
+      anonymous: false,
+    });
+    assert.equal(named.status, 201);
+    assert.match(named.data.id, /^res_12_/);
+    assert.deepEqual(
+      { ...named.data, id: undefined },
+      { id: undefined, flat: '12', anonymous: false, name: 'Ada', email: 'ada@example.invalid', whatsapp: '+440000' },
+    );
+
+    const anon = await api.post('/residents', { flat: '7', anonymous: true, email: 'x@example.invalid' });
+    assert.equal(anon.status, 201);
+    assert.equal(anon.data.anonymous, true);
+    assert.equal(anon.data.email, undefined, 'anonymous residents keep no contact details');
+  });
+
+  test('POST /residents/:id/confirm returns {ok}', async () => {
+    const { data: resident } = await api.post('/residents', { name: 'Bo', flat: '3' });
+    const confirmed = await api.post(`/residents/${resident.id}/confirm`, { thatWasMe: true });
+    assert.equal(confirmed.status, 200);
+    assert.deepEqual(confirmed.data, { ok: true });
+    assert.equal((await api.post('/residents/nobody/confirm')).status, 404);
+  });
+
+  test('POST /residents/:id/face needs a confirmed resident, then /faces/match finds them', async () => {
+    const descriptor = Array.from({ length: 128 }, (_, i) => Math.sin(i) / 10);
+    const { data: resident } = await api.post('/residents', { name: 'Cy', flat: '5' });
+
+    const early = await api.post(`/residents/${resident.id}/face`, { descriptor });
+    assert.equal(early.status, 409, 'no enrolment before "that was me"');
+    const unmatched = await api.post('/faces/match', { descriptor });
+    assert.equal(unmatched.data.matched, false);
+
+    await api.post(`/residents/${resident.id}/confirm`);
+    assert.equal((await api.post(`/residents/${resident.id}/face`, { descriptor: ['x'] })).status, 400);
+    assert.equal((await api.post('/residents/nobody/face', { descriptor })).status, 404);
+    const enrolled = await api.post(`/residents/${resident.id}/face`, { descriptor });
+    assert.equal(enrolled.status, 201);
+
+    // Shift every component by d: the distance is d * sqrt(128).
+    const near = descriptor.map((v) => v + 0.4 / Math.sqrt(128));
+    const far = descriptor.map((v) => v + 0.6 / Math.sqrt(128));
+    const hit = await api.post('/faces/match', { descriptor: near });
+    assert.equal(hit.data.matched, true);
+    assert.equal(hit.data.resident_id, resident.id);
+    assert.ok(Math.abs(hit.data.distance - 0.4) < 1e-3);
+
+    const miss = await api.post('/faces/match', { descriptor: far });
+    assert.deepEqual(
+      { matched: miss.data.matched, resident_id: miss.data.resident_id, distance: miss.data.distance },
+      { matched: false, resident_id: null, distance: null },
+    );
+    assert.equal((await api.post('/faces/match', {})).data.matched, false);
+  });
+
+  test('POST /arrivals creates a local pending visit; GET /visits returns it', async () => {
+    const created = await api.post('/arrivals', { flat: '12', snapshot_url: 'data:image/jpeg;base64,AA', face: {} });
+    assert.equal(created.status, 201);
+    assert.equal(created.data.execution_id, null);
+    assert.match(created.data.visit_id, /^visit_/);
+
+    const current = await api.get('/visits?flat=12&status=pending');
+    assert.equal(current.status, 200);
+    const visit = current.data;
+    assert.equal(visit.id, created.data.visit_id);
+    assert.equal(visit.status, 'pending_decision');
+    assert.equal(visit.snapshot, 'data:image/jpeg;base64,AA');
+    for (const key of [
+      'id', 'flat', 'residentId', 'status', 'at', 'timeoutSeconds', 'transcript', 'confidence',
+      'faceDistance', 'reply', 'executionId', 'parcel', 'snapshot', 'decidedAt', 'speech', 'mode',
+    ]) {
+      assert.ok(key in visit, `Visit has ${key}`);
+    }
+    assert.equal((await api.get('/visits?flat=99&status=pending')).data, null);
+    assert.equal((await api.get(`/visits/${visit.id}`)).data.id, visit.id);
+    assert.equal((await api.get('/visits/nope')).status, 404);
+    assert.ok(Array.isArray((await api.get('/visits?flat=12')).data));
+  });
+
+  test('POST /visits/:id/decision validates and updates the visit offline', async () => {
+    const { data } = await api.post('/arrivals', { flat: '12' });
+    assert.equal((await api.post(`/visits/${data.visit_id}/decision`, { decision: 'maybe' })).status, 400);
+    assert.equal((await api.post('/visits/nope/decision', { decision: 'approve' })).status, 404);
+
+    const ok = await api.post(`/visits/${data.visit_id}/decision`, { decision: 'approve' });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.data.ok, true);
+    assert.equal(ok.data.signalled, false);
+    assert.equal((await api.get(`/visits/${data.visit_id}`)).data.status, 'approved');
+    assert.equal((await api.post(`/visits/${data.visit_id}/decision`, { decision: 'decline' })).status, 409);
+  });
+
+  test('POST /visits from the worker, then /intercom/speak attaches speech and the wav', async () => {
+    assert.equal((await api.post('/visits', {})).status, 400);
+    const posted = await api.post('/visits', {
+      visit_id: 'visit_worker_1',
+      execution_id: 'exec_1',
+      flat: '8',
+      resident_id: 'res_8',
+      transcript: { text: 'Parcel for flat eight' },
+      face_distance: 0.31,
+      confidence: 0.86,
+      proposed_reply: 'One moment please.',
+      parcel: { courier: 'DPD', label: 'FLAT 8' },
+    });
+    assert.equal(posted.status, 201);
+    assert.equal(posted.data.visit_id, 'visit_worker_1');
+    assert.equal(posted.data.status, 'pending_decision');
+    assert.equal(posted.data.visit.transcript, 'Parcel for flat eight');
+    assert.equal(posted.data.visit.faceDistance, 0.31);
+
+    const wav = Buffer.from('RIFF....WAVEfake');
+    const spoken = await api.post('/intercom/speak', {
+      visit_id: 'visit_worker_1',
+      text: 'Come in, 8.',
+      model: 'voxtral-mini-tts-3-0-13',
+      voice_id: 'voice_447',
+      transport: 'realtime',
+      chunks: 5,
+      first_chunk_ms: 1004,
+      audio_bytes: 96044,
+      gain_db: 6.1,
+      peak_dbfs: -1,
+      audio_base64: wav.toString('base64'),
+    });
+    assert.equal(spoken.data.played, true);
+    assert.equal(spoken.data.duration_ms, 2001);
+
+    const visit = (await api.get('/visits/visit_worker_1')).data;
+    assert.equal(visit.reply, 'Come in, 8.');
+    assert.equal(visit.speech.model, 'voxtral-mini-tts-3-0-13');
+    assert.equal(visit.speech.voiceId, 'voice_447');
+    assert.equal(visit.speech.audioUrl, '/intercom/audio/visit_worker_1.wav');
+
+    const audio = await api.get(visit.speech.audioUrl);
+    assert.equal(audio.status, 200);
+    assert.deepEqual(audio.data, wav);
+    assert.equal((await api.get('/intercom/audio/nope.wav')).status, 404);
+  });
+
+  test('POST /events logs; GET /events filters by flat and day; a decision event closes the visit', async () => {
+    assert.equal((await api.post('/events', {})).status, 400);
+    await api.post('/visits', { visit_id: 'visit_ev', flat: '20' });
+    const logged = await api.post('/events', {
+      type: 'visit.decision',
+      visit_id: 'visit_ev',
+      decision: 'decline',
+      automatic: true,
+    });
+    assert.equal(logged.status, 201);
+    assert.equal(logged.data.stored, true);
+    assert.match(logged.data.event_id, /^evt_/);
+    assert.equal((await api.get('/visits/visit_ev')).data.status, 'expired');
+
+    const day = new Date().toISOString().slice(0, 10);
+    const listed = await api.get(`/events?flat=20&day=${day}`);
+    assert.equal(listed.data.flat, '20');
+    assert.equal(listed.data.day, day);
+    assert.ok(listed.data.events.some((e) => e.type === 'visit.decision' && e.flat === '20'));
+    assert.equal((await api.get('/events?flat=20&day=2001-01-01')).data.events.length, 0);
+    assert.equal((await api.get('/events?day=yesterday')).status, 400);
+  });
+
+  test('POST /parcels and the parcel-arrival event fill GET /parcels', async () => {
+    assert.equal((await api.post('/parcels', {})).status, 400);
+    const created = await api.post('/parcels', { flat: '12', snapshot_url: 'https://example.invalid/p.jpg' });
+    assert.equal(created.status, 201);
+    assert.equal(created.data.execution_id, null);
+
+    await api.post('/events', {
+      type: 'parcel.arrival',
+      parcel_id: created.data.parcel_id,
+      flat: '12',
+      courier: 'DPD',
+      label_text: 'FLAT 12 - HANDLE WITH CARE',
+    });
+    const parcels = (await api.get('/parcels?flat=12')).data;
+    const parcel = parcels.find((p) => p.id === created.data.parcel_id);
+    assert.deepEqual(Object.keys(parcel).sort(), ['at', 'courier', 'flat', 'id', 'label', 'status']);
+    assert.equal(parcel.courier, 'DPD');
+    assert.equal(parcel.label, 'FLAT 12 - HANDLE WITH CARE');
+    assert.equal(parcel.status, 'at_desk');
+    assert.deepEqual((await api.get('/parcels?flat=404')).data, []);
+  });
+
+  test('POST /notifications is in-app, and in-app only for anonymous residents', async () => {
+    assert.equal((await api.post('/notifications', { title: 'x' })).status, 400);
+    const { data: named } = await api.post('/residents', { name: 'Di', flat: '30', email: 'di@example.invalid' });
+    const { data: anon } = await api.post('/residents', { flat: '31', anonymous: true });
+
+    const toNamed = await api.post('/notifications', { resident_id: named.id, title: 'Parcel waiting', body: 'Hi' });
+    assert.equal(toNamed.status, 201);
+    assert.deepEqual(toNamed.data.channels, ['in_app']);
+    assert.deepEqual(toNamed.data.preferred, ['email']);
+
+    const toAnon = await api.post('/notifications', { resident_id: anon.id, title: 'Parcel waiting' });
+    assert.deepEqual(toAnon.data.channels, ['in_app']);
+    assert.deepEqual(toAnon.data.preferred, []);
+
+    const inbox = await api.get('/notifications?flat=30');
+    assert.equal(inbox.data[0].title, 'Parcel waiting');
+    assert.equal((await api.get('/notifications')).status, 400);
+  });
+
+  test('GET /presence lists residents who arrived and have not left today', async () => {
+    const { data: a } = await api.post('/residents', { name: 'Eve', flat: '40' });
+    const { data: b } = await api.post('/residents', { name: 'Fin', flat: '41' });
+    await api.post('/events', { type: 'resident.arrival', resident_id: a.id });
+    await api.post('/events', { type: 'resident.arrival', resident_id: b.id });
+    await api.post('/events', { type: 'resident.departure', resident_id: b.id });
+
+    const { data } = await api.get('/presence');
+    const ids = data.in.map((p) => p.residentId);
+    assert.ok(ids.includes(a.id));
+    assert.ok(!ids.includes(b.id));
+    assert.equal(data.in.find((p) => p.residentId === a.id).flat, '40');
+  });
+
+  test('WS /live pushes visit frames for its own flat only', async () => {
+    const twelve = await listen(`${api.ws}/live?flat=12`);
+    const nine = await listen(`${api.ws}/live?flat=9`);
+    await settle();
+    twelve.frames.length = 0;
+    nine.frames.length = 0;
+
+    await api.post('/visits', { visit_id: 'visit_ws_9', flat: '9', proposed_reply: 'Hello' });
+    await settle();
+    assert.equal(twelve.frames.length, 0, 'flat 12 hears nothing about flat 9');
+    assert.equal(nine.frames.length, 1);
+    assert.equal(nine.frames[0].type, 'visit');
+    assert.equal(nine.frames[0].visit.id, 'visit_ws_9');
+
+    await api.post('/intercom/speak', { visit_id: 'visit_ws_9', text: 'Hello' });
+    await settle();
+    assert.equal(nine.frames.at(-1).visit.speech.text, 'Hello');
+    assert.equal(twelve.frames.length, 0);
+
+    twelve.socket.close();
+    nine.socket.close();
+  });
+
+  test('WS /live without a flat is refused', async () => {
+    const code = await new Promise((resolve) => {
+      const socket = new WebSocket(`${api.ws}/live`);
+      socket.on('close', (c) => resolve(c));
+    });
+    assert.equal(code, 1008);
+  });
+});
+
+describe('live API with a fake Mistral', () => {
+  const calls = [];
+  const fakeMistral = async (url, init) => {
+    if (!String(url).startsWith('https://mistral.invalid')) return fetch(url, init);
+    calls.push({ url: String(url), body: JSON.parse(init.body), auth: init.headers.authorization });
+    return new Response(JSON.stringify({ execution_id: 'exec_live_1' }), { status: 200 });
+  };
+  let api;
+  before(async () => {
+    api = await start({
+      env: { MISTRAL_API_KEY: 'test-key', MISTRAL_API_URL: 'https://mistral.invalid', NODE_ENV: 'test' },
+      fetch: fakeMistral,
+    });
+  });
+  after(() => api.close());
+
+  test('POST /arrivals starts visitor-arrival and the decision signals it', async () => {
+    const created = await api.post('/arrivals', { flat: '12', snapshot_url: 'https://example.invalid/s.jpg', face: { descriptor: [0.1] } });
+    assert.equal(created.status, 201);
+    assert.equal(created.data.execution_id, 'exec_live_1');
+    const start = calls.at(-1);
+    assert.equal(start.url, 'https://mistral.invalid/v1/workflows/visitor-arrival/execute');
+    assert.equal(start.auth, 'Bearer test-key');
+    assert.equal(start.body.input.visit_id, created.data.visit_id);
+    assert.equal(start.body.input.flat, '12');
+    assert.deepEqual(start.body.input.face, { descriptor: [0.1] });
+
+    // The worker posts the visit before the resident can answer.
+    await api.post('/visits', { visit_id: created.data.visit_id, execution_id: 'exec_live_1', flat: '12' });
+    const decided = await api.post(`/visits/${created.data.visit_id}/decision`, { decision: 'decline' });
+    assert.equal(decided.data.ok, true);
+    assert.equal(decided.data.signalled, true);
+    const signal = calls.at(-1);
+    assert.equal(signal.url, 'https://mistral.invalid/v1/workflows/executions/exec_live_1/signals');
+    assert.equal(signal.body.name, 'resident-decision');
+    assert.equal(signal.body.input.decision, 'decline');
+  });
+
+  test('POST /parcels starts parcel-arrival', async () => {
+    const created = await api.post('/parcels', { snapshot_url: 'https://example.invalid/p.jpg', flat: '12' });
+    assert.equal(created.status, 201);
+    assert.equal(created.data.execution_id, 'exec_live_1');
+    assert.equal(calls.at(-1).url, 'https://mistral.invalid/v1/workflows/parcel-arrival/execute');
+    assert.equal(calls.at(-1).body.input.parcel_id, created.data.parcel_id);
+  });
+});
+
+test('WORKFLOWS_REPLAY=1 wins over a key, and the face threshold is configurable', () => {
+  const replay = configFromEnv({ MISTRAL_API_KEY: 'k', WORKFLOWS_REPLAY: '1' });
+  assert.equal(replay.offline, true);
+  assert.equal(configFromEnv({}).offline, true);
+  assert.equal(configFromEnv({ MISTRAL_API_KEY: 'k' }).offline, false);
+  assert.equal(configFromEnv({}).faceMatchThreshold, 0.5);
+  assert.equal(configFromEnv({ FACE_MATCH_THRESHOLD: '0.4' }).faceMatchThreshold, 0.4);
+});
