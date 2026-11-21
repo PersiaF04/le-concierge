@@ -33,6 +33,7 @@ npm run dev        # http://localhost:3000, ws://localhost:3000/live?flat=12
 | `VISIT_TTL_SECONDS` | `300` | A visit still waiting this long is swept to `expired` |
 | `MISTRAL_RETRY_BASE_MS` | `600` | First backoff when Mistral answers 429 or 5xx (4 attempts, doubling) |
 | `FACE_MATCH_THRESHOLD` | `0.5` | Largest Euclidean distance that counts as a face match |
+| `BUILDING_FLATS` | `1-20` | The building's flats: ranges and names, comma separated, e.g. `1-20,PH`. `POST /arrivals` refuses any other flat |
 | `SEED_DEMO` | unset | `1` adds the demo resident `res_12_persia` at flat 12 |
 | `VOICE_ID` | `gb_jane_neutral` | The door's voice in the Voice Agent; keep it equal to the worker's `SPEECH_VOICE_ID` so there is one voice everywhere |
 | `VOICE_LLM_MODEL` | `mistral-small-latest` | The Voice Agent's model |
@@ -139,6 +140,15 @@ Creates the visit, pushes it on `/live`, and starts `visitor-arrival` with input
 
 `201 { visit_id, execution_id }` (`execution_id` is null offline).
 `502 { visit_id, execution_id: null, error }` if Mistral refused; the visit is marked `fallback`.
+`422 { error: "no_such_flat", flat, reply }` if the flat is not in `BUILDING_FLATS`, and
+`422 { error: "no_resident", flat, reply }` if it is but nobody is registered there
+(`POST /residents`). Either way no visit is created and no workflow starts; `reply` is the
+sentence the door says. Flats compare trimmed, case-insensitive, without leading zeros.
+A null `flat` is never refused: the workflow works the flat out from what the visitor said.
+
+#### `GET /flats/:flat`
+
+`200 { exists, hasResident }`: is the flat in `BUILDING_FLATS`, and is anyone registered there.
 
 #### `POST /visits`
 

@@ -46,6 +46,36 @@ const waiting = (visit: Visit | null) => visit?.status === "arriving" || visit?.
 
 /** End the conversation after this long without anyone saying anything. */
 const SILENCE_MS = 90_000;
+/** After the agent hangs up or the resident answers, end this long after the last word. */
+const WIND_DOWN_MS = 10_000;
+/** The page's only text while nobody is talking to the door. */
+const HINT = "Hold Space or press and hold to talk";
+
+/** What the door says when the API refuses the flat (the API normally sends its own line). */
+function refusalLine(reason: "no_such_flat" | "no_resident", flat: string): string {
+  return reason === "no_such_flat"
+    ? `I'm sorry, there is no flat ${flat} in this building. Could you check the number?`
+    : `I'm sorry, there is nobody registered at flat ${flat}, so I can't reach them.`;
+}
+
+/** No progress for this long (no reply, a hung tool): the door says goodbye and hangs up. */
+const STUCK_MS = 10_000;
+const GOODBYE = "Thanks for stopping by, goodbye!";
+
+/** A line reduced to its words, to spot the agent saying the same thing twice. */
+const words = (text: string) => text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+
+/** The same line, or nearly: at least 85 % of the words shared. */
+function nearlySame(a: string, b: string): boolean {
+  const x = words(a);
+  const y = words(b);
+  if (!x.length || !y.length) return false;
+  if (x.join(" ") === y.join(" ")) return true;
+  const right = new Set(y);
+  const shared = new Set(x.filter((word) => right.has(word))).size;
+  return shared / new Set([...x, ...y]).size >= 0.85;
+}
+
 /** How long a line stays up after it was said. */
 const CAPTION_HOLD_MS = 2500;
 
@@ -64,14 +94,16 @@ function loudness(node: AnalyserNode, buffer: Uint8Array<ArrayBuffer>): number {
 }
 
 /**
- * The door is the concierge's face and nothing else. The camera and the
- * microphone work in the background; the desk rings the bell with Space, a tap
- * on the face, or the control that appears when the pointer reaches the
- * bottom-left corner. The log lives on its own page (#ledger).
+ * The door is the concierge's face and nothing else. The camera (video only)
+ * runs in the background; the microphone is closed until someone holds to talk.
+ * Push-to-talk: hold Space, the face, or the control that appears when the
+ * pointer reaches the bottom-left corner. The first hold rings the bell; the
+ * mic is live only while held. Esc ends the conversation. The log lives on its
+ * own page (#ledger).
  *
  * Live, the bell opens a Mistral Voice Agent conversation (see ../voice.ts). If
- * that cannot start, the door falls back to the recorded pipeline: listen for
- * six seconds, post the arrival, and play the workflow's Voxtral reply. Either
+ * that cannot start, the door falls back to the recorded pipeline: record while
+ * held, post the arrival on release, and play the workflow's Voxtral reply. Either
  * way there is one voice, the API's, and no browser speech.
  */
 export default function DoorScreen() {
@@ -91,14 +123,29 @@ export default function DoorScreen() {
   // The live conversation.
   const [inConversation, setInConversation] = useState(false);
   const [agentState, setAgentState] = useState<AgentState>("idle");
-  const [visitorTalking, setVisitorTalking] = useState(false);
+  /** Push-to-talk: the visitor is holding Space, the face or the desk control. */
+  const [holding, setHolding] = useState(false);
+  const held = useRef(false);
+  /** Released, and the agent has not answered yet. */
+  const [awaitingReply, setAwaitingReply] = useState(false);
+  /** A line the door shows on its own: the fallback's flat refusal, or the stuck-loop goodbye. */
+  const [notice, setNoticeText] = useState("");
+  /** The conversation's microphone track, so it can be stopped whatever the SDK does. */
+  const localTrack = useRef<MediaStreamTrack | null>(null);
+  /** The agent hung up or the resident answered: a short silence ends it. */
+  const windingDown = useRef(false);
+  /** The stuck-loop clock, the agent's last finished line, and whether ask_resident is waiting. */
+  const stuckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastAgentLine = useRef("");
+  const askingResident = useRef(false);
+  /** Esc was pressed while the bell was still connecting: do not fall back to recording. */
+  const cancelled = useRef(false);
   const [toolBusy, setToolBusy] = useState(false);
   const [agentLine, setAgentLine] = useState("");
   const [lineHeld, setLineHeld] = useState(false);
   const sessionRef = useRef<VoiceSession | null>(null);
   const agentAudioRef = useRef<HTMLAudioElement | null>(null);
   const silenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const talkingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Playback of the fallback pipeline's wav.
@@ -113,7 +160,7 @@ export default function DoorScreen() {
   const samples = useRef(new Uint8Array(1024));
 
   /** What the door says: the agent's line in a conversation, else the workflow's reply. */
-  const said = inConversation ? agentLine : (visit?.speech?.text ?? visit?.reply ?? "");
+  const said = notice || (inConversation ? agentLine : (visit?.speech?.text ?? visit?.reply ?? ""));
 
   /** How loud the door is right now, for the mouth. */
   const level = useCallback(() => {
@@ -164,7 +211,16 @@ export default function DoorScreen() {
     captionTimer.current = setTimeout(() => setCaptionOnly(false), Math.min(9000, Math.max(2000, words * 380)));
   }, []);
 
-  /** The camera runs in the background, ready to photograph the doorstep. */
+  /** Show a line with no audio behind it (a flat refusal, the goodbye), or clear it. */
+  const setNotice = useCallback(
+    (text: string) => {
+      setNoticeText(text);
+      if (text) showCaption(text);
+    },
+    [showCaption],
+  );
+
+  /** The camera (video only, no audio track) runs in the background, ready to photograph the doorstep. */
   const { start: startCamera } = camera;
   useEffect(() => {
     void startCamera();
@@ -244,20 +300,32 @@ export default function DoorScreen() {
 
   // ── the live conversation ─────────────────────────────────────────────────
 
+  /**
+   * Restart the auto-end clock: 90 s without anyone saying anything, or only
+   * 10 s once the agent has hung up or the resident has answered.
+   */
   const resetSilence = useCallback(() => {
     if (silenceTimer.current) clearTimeout(silenceTimer.current);
+    const ms = windingDown.current ? WIND_DOWN_MS : SILENCE_MS;
     silenceTimer.current = setTimeout(() => {
-      console.info("[door] 90 s of silence, ending the conversation");
+      console.info(`[door] ${ms / 1000} s with nothing said, ending the conversation`);
       void sessionRef.current?.close();
-    }, SILENCE_MS);
+    }, ms);
   }, []);
 
+  /** The conversation is over: everything is reset and the microphone is let go. */
   const endConversation = useCallback(() => {
-    for (const timer of [silenceTimer, talkingTimer, holdTimer]) {
+    lastAgentLine.current = "";
+    askingResident.current = false;
+    for (const timer of [silenceTimer, holdTimer, stuckTimer]) {
       if (timer.current) clearTimeout(timer.current);
       timer.current = null;
     }
     sessionRef.current = null;
+    // The SDK stops its track on close; stopping it here too costs nothing.
+    localTrack.current?.stop();
+    localTrack.current = null;
+    windingDown.current = false;
     const element = agentAudioRef.current;
     if (element) {
       element.pause();
@@ -266,12 +334,63 @@ export default function DoorScreen() {
     analyserRef.current = null;
     setInConversation(false);
     setAgentState("idle");
-    setVisitorTalking(false);
+    setAwaitingReply(false);
     setToolBusy(false);
     setLineHeld(false);
     // The visit ask_resident started is over for this door; a late frame may bring it back.
     setVisit(null);
   }, []);
+
+  /** Push-to-talk: the conversation's microphone is live only while the visitor holds. */
+  const setMicLive = useCallback(async (live: boolean) => {
+    const session = sessionRef.current;
+    if (!session) return;
+    try {
+      await session.setInputEnabled(live);
+    } catch {
+      const track = session.localTrack ?? localTrack.current;
+      if (track) track.enabled = live;
+    }
+  }, []);
+
+  const clearStuck = useCallback(() => {
+    if (stuckTimer.current) clearTimeout(stuckTimer.current);
+    stuckTimer.current = null;
+  }, []);
+
+  /**
+   * The conversation is going nowhere: say the goodbye and hang up. The SDK
+   * cannot make the agent speak on demand (`update()` only applies at the next
+   * turn, and there will be none), so the line is shown as the door's own
+   * subtitle; the agent's instructions ask it to do the same in its voice.
+   */
+  const sayGoodbye = useCallback(
+    (why: string) => {
+      clearStuck();
+      const session = sessionRef.current;
+      if (!session) return;
+      console.info(`[door] no progress (${why}): saying goodbye`);
+      setNotice(GOODBYE);
+      void session.close();
+    },
+    [clearStuck, setNotice],
+  );
+
+  /** Start the 10 s no-progress clock, unless ask_resident is still waiting for the resident. */
+  const armStuck = useCallback(
+    (why: string) => {
+      clearStuck();
+      if (askingResident.current) return;
+      stuckTimer.current = setTimeout(() => sayGoodbye(why), STUCK_MS);
+    },
+    [clearStuck, sayGoodbye],
+  );
+
+  /** After the agent hangs up or the resident answers, a quiet door ends after 10 s. */
+  const windDown = useCallback(() => {
+    windingDown.current = true;
+    resetSilence();
+  }, [resetSilence]);
 
   /** Open a Voice Agent session and wire its events to the face. Throws if it cannot start. */
   const startConversation = useCallback(async () => {
@@ -280,11 +399,17 @@ export default function DoorScreen() {
       onVisit: (id) => {
         setVisit(freshVisit(id, null));
       },
+      onDecision: () => windDown(),
     });
     sessionRef.current = session;
 
     session.on("audio_track", ({ track, source }) => {
-      if (source !== "remote") return;
+      if (source === "local") {
+        // Muted from the start unless the visitor is still holding.
+        localTrack.current = track;
+        track.enabled = held.current;
+        return;
+      }
       const stream = new MediaStream([track]);
       const element = agentAudioRef.current;
       const context = contextRef.current;
@@ -312,16 +437,36 @@ export default function DoorScreen() {
         .catch((error) => console.warn("[door] <audio> refused to play; the SDK's element plays instead", error));
     });
 
-    session.on("agent_state_changed", ({ state }) => setAgentState(state as AgentState));
+    let previous: string = "idle";
+    session.on("agent_state_changed", ({ state }) => {
+      setAgentState(state as AgentState);
+      if (state === "speaking" || state === "thinking") clearStuck();
+      if (state === "speaking") {
+        setAwaitingReply(false);
+        resetSilence();
+      } else if (previous === "speaking" && (state === "listening" || state === "idle") && !held.current) {
+        armStuck("no reply from the visitor");
+      }
+      previous = state;
+    });
 
     session.on("transcript", ({ role, content, final }) => {
-      resetSilence();
       if (role === "user") {
-        setVisitorTalking(!final);
-        if (talkingTimer.current) clearTimeout(talkingTimer.current);
-        talkingTimer.current = setTimeout(() => setVisitorTalking(false), 1500);
+        // The visitor said more: the conversation is not over after all.
+        windingDown.current = false;
+        clearStuck();
+        resetSilence();
         return;
       }
+      if (final) {
+        if (nearlySame(content, lastAgentLine.current)) {
+          sayGoodbye("the agent repeated itself");
+          return;
+        }
+        lastAgentLine.current = content;
+      }
+      resetSilence();
+      setAwaitingReply(false);
       setAgentLine(content);
       setLineHeld(true);
       if (holdTimer.current) clearTimeout(holdTimer.current);
@@ -331,11 +476,20 @@ export default function DoorScreen() {
     session.on("tool_call_started", ({ name }) => {
       console.info(`[door] tool ${name} started`);
       setToolBusy(true);
+      if (name === "hang_up") windDown();
+      else if (name === "ask_resident") {
+        // Waiting for the resident, with a "checking" filler, is not a loop.
+        askingResident.current = true;
+        clearStuck();
+      } else armStuck(`tool ${name} hung`);
     });
     session.on("tool_call_ended", ({ name, status }) => {
       console.info(`[door] tool ${name} ${status}`);
       setToolBusy(false);
-      resetSilence();
+      if (name === "ask_resident") askingResident.current = false;
+      else clearStuck();
+      if (name === "hang_up") windDown();
+      else resetSilence();
     });
     session.on("unhandled_tool", ({ name }) => console.warn(`[door] the agent asked for an unknown tool: ${name}`));
     session.on("error", (event) => console.warn("[door] voice agent error", event));
@@ -353,27 +507,42 @@ export default function DoorScreen() {
       void session.close().catch(() => {});
       throw error;
     }
+    if (sessionRef.current !== session) return;
+    await setMicLive(held.current);
+    if (!held.current) setAwaitingReply(true);
     resetSilence();
     void session.wait().then(endConversation, endConversation);
-  }, [camera, endConversation, resetSilence]);
+  }, [armStuck, camera, clearStuck, endConversation, resetSilence, sayGoodbye, setMicLive, windDown]);
 
   /**
-   * The fallback doorbell: photograph the doorstep, listen for about six
-   * seconds, and start the workflow with both.
+   * The fallback doorbell: photograph the doorstep, record while the visitor
+   * holds, and start the workflow with both when they let go. A flat the
+   * building does not have, or one with nobody registered, is said on screen.
    */
-  const ringRecorded = useCallback(async (photo: string | null) => {
-    const audio = await mic.record();
-    const created = await startArrival({ flat: null, snapshot: photo, audio, doorId });
-    if (!created) return;
-    spokenFor.current = null;
-    ringedFor.current.add(created.visitId);
-    const arrived = freshVisit(created.visitId, created.executionId);
-    // A frame for this visit may already have arrived over the socket.
-    setVisit((focused) => (focused?.id === arrived.id ? focused : arrived));
-  }, [mic]);
+  const ringRecorded = useCallback(
+    async (photo: string | null) => {
+      const audio = held.current ? await mic.record() : null;
+      if (cancelled.current) return;
+      const created = await startArrival({ flat: null, snapshot: photo, audio, doorId });
+      if (!created) return;
+      if ("refused" in created) {
+        setNotice(created.reply || refusalLine(created.refused, created.flat));
+        return;
+      }
+      setNotice("");
+      spokenFor.current = null;
+      ringedFor.current.add(created.visitId);
+      const arrived = freshVisit(created.visitId, created.executionId);
+      // A frame for this visit may already have arrived over the socket.
+      setVisit((focused) => (focused?.id === arrived.id ? focused : arrived));
+    },
+    [mic],
+  );
 
   const ring = useCallback(async () => {
     setRinging(true);
+    setNotice("");
+    cancelled.current = false;
     stopSpeech();
     const photo = camera.capture();
     if (photo) {
@@ -384,36 +553,89 @@ export default function DoorScreen() {
       await startConversation();
       console.info("[door] path: Mistral Voice Agent");
     } catch (error) {
-      console.info("[door] path: record-and-reply fallback (voice agent unavailable)", error);
-      await ringRecorded(photo);
+      if (!cancelled.current) {
+        console.info("[door] path: record-and-reply fallback (voice agent unavailable)", error);
+        await ringRecorded(photo);
+      }
     } finally {
       setRinging(false);
     }
   }, [camera, ringRecorded, startConversation, stopSpeech]);
 
   /**
-   * One gesture for the desk: in a conversation it hangs up; while recording
-   * it ends the recording; offline it replays the recorded reply; otherwise it
-   * rings the bell. The gesture also unlocks the audio.
+   * Press and hold (Space, the face, or the desk control): the first press
+   * rings the bell and opens the conversation; in a conversation it opens the
+   * microphone until the release. Offline it replays the recorded reply.
    */
-  const press = useCallback(() => {
+  const hold = useCallback(() => {
     unlockAudio();
+    if (apiMode !== "live") {
+      void speak();
+      return;
+    }
+    if (held.current) return;
+    held.current = true;
+    setHolding(true);
+    if (sessionRef.current) {
+      void setMicLive(true);
+      clearStuck();
+      if (silenceTimer.current) clearTimeout(silenceTimer.current);
+      return;
+    }
+    if (!ringing && mic.state !== "recording") void ring();
+  }, [clearStuck, mic.state, ring, ringing, setMicLive, speak, unlockAudio]);
+
+  /** The release sends what was said: the mic goes quiet and the agent's turn begins. */
+  const letGo = useCallback(() => {
+    if (!held.current) return;
+    held.current = false;
+    setHolding(false);
+    if (sessionRef.current) {
+      void setMicLive(false);
+      setAwaitingReply(true);
+      resetSilence();
+      // The agent should answer within 10 s; a hold with nothing said gets nothing back.
+      armStuck("no reply after the release");
+    }
+    mic.stop();
+  }, [armStuck, mic, resetSilence, setMicLive]);
+
+  /** Esc, or the desk control: end the conversation (or drop the recording) and let go of the mic. */
+  const end = useCallback(() => {
+    cancelled.current = true;
+    held.current = false;
+    setHolding(false);
+    mic.stop();
     if (sessionRef.current) void sessionRef.current.close();
-    else if (mic.state === "recording") mic.stop();
-    else if (apiMode !== "live") void speak();
-    else if (!ringing) void ring();
-  }, [mic, ring, ringing, speak, unlockAudio]);
+  }, [mic]);
 
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
+    const onDown = (event: KeyboardEvent) => {
+      if (event.code === "Escape") {
+        end();
+        return;
+      }
       if (event.code !== "Space" || event.repeat) return;
       if (event.target instanceof HTMLButtonElement) return;
       event.preventDefault();
-      press();
+      hold();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [press]);
+    const onUp = (event: KeyboardEvent) => {
+      if (event.code === "Space") letGo();
+    };
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    window.addEventListener("pointerup", letGo);
+    window.addEventListener("pointercancel", letGo);
+    window.addEventListener("blur", letGo);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+      window.removeEventListener("pointerup", letGo);
+      window.removeEventListener("pointercancel", letGo);
+      window.removeEventListener("blur", letGo);
+    };
+  }, [end, hold, letGo]);
 
   useEffect(
     () => () => {
@@ -436,44 +658,67 @@ export default function DoorScreen() {
       ? "thinking"
       : agentSpeaking
         ? "speaking"
-        : visitorTalking
+        : holding
           ? "listening"
-          : agentState === "thinking"
+          : awaitingReply || agentState === "thinking"
             ? "thinking"
             : "idle"
     : speaking
       ? "speaking"
-      : mic.state === "recording"
+      : mic.state === "recording" || (ringing && holding)
         ? "listening"
         : ringing || (apiMode === "live" && waiting(visit))
           ? "thinking"
           : "idle";
 
-  const showLine = inConversation ? agentSpeaking || lineHeld : speaking || captionOnly;
+  /** Nobody is talking to the door: the face rests, dimmed, with the one hint. */
+  const resting = mood === "idle" && !inConversation && !captionOnly;
+  const showLine = captionOnly || (inConversation ? agentSpeaking || lineHeld : speaking);
+  const line = showLine && said ? said : resting ? HINT : "";
 
   return (
     <div className="door" onPointerMove={(event) => setGaze(gazeFrom(event))}>
       <main className="door-stage">
-        <div className="door-face" onClick={press}>
-          <Face mood={mood} level={level} gaze={gaze} />
+        <div
+          className="door-face"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            hold();
+          }}
+        >
+          <Face mood={mood} level={level} gaze={gaze} resting={resting} />
         </div>
-        <p className="subtitle" data-show={showLine && Boolean(said)} aria-live="polite">
-          {said}
+        <p
+          className="subtitle"
+          data-show={Boolean(line)}
+          data-hint={line === HINT}
+          data-testid="door-line"
+          aria-live="polite"
+        >
+          {line}
         </p>
         <audio ref={agentAudioRef} hidden />
       </main>
 
       <div className="door-desk">
-        <button type="button" className="btn-quiet small" onClick={press}>
-          {inConversation
-            ? "End the conversation"
-            : mic.state === "recording"
-              ? "Done speaking"
-              : apiMode === "live"
-                ? "A visitor is here"
-                : "Say the reply"}
-          <span className="mono small muted"> · space</span>
-        </button>
+        {inConversation ? (
+          <button type="button" className="btn-quiet small" onClick={end}>
+            End the conversation
+            <span className="mono small muted"> · esc</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn-quiet small"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              hold();
+            }}
+          >
+            {apiMode === "live" ? (holding ? "Release to send" : "Hold to talk") : "Say the reply"}
+            <span className="mono small muted"> · space</span>
+          </button>
+        )}
       </div>
     </div>
   );
