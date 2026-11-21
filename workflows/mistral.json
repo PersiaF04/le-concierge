@@ -1,0 +1,11 @@
+{
+  "name": "le-concierge-workflows",
+  "description": "Le Concierge decision flows on Mistral Workflows",
+  "modules": {
+    "worker": {
+      "path": "apps/worker",
+      "entrypoint": "worker.entrypoints.worker",
+      "dev": "uv run python -m worker.entrypoints.worker"
+    }
+  }
+}

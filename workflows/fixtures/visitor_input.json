@@ -1,0 +1,11 @@
+{
+  "visit_id": "visit_0001",
+  "snapshot_url": "https://example.invalid/snapshots/visit_0001.jpg",
+  "audio_url": "https://example.invalid/audio/visit_0001.wav",
+  "flat": null,
+  "face": {
+    "descriptor": [0.0123, -0.0456, 0.0789],
+    "model": "face-api.js/ssd_mobilenetv1"
+  },
+  "decision_timeout_seconds": 5
+}

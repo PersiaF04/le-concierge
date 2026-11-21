@@ -1,0 +1,5 @@
+{
+  "delivered": true,
+  "channels": ["in_app", "email"],
+  "anonymous_fallback": "in_app"
+}

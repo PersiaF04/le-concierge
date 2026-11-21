@@ -85,13 +85,64 @@ Watch a resident receive a visitor notification, see the live photo, hear the au
 | **Concierge App** | React, Tailwind CSS |
 | **Database** | SQLite (embedded) |
 | **Testing** | Node.js Test Runner (`node --test`) |
+| **Workflows** | Mistral Workflows (Python 3.12 worker, `mistralai-workflows`) |
 | **CI/CD** | GitHub Actions |
+
+## Where we use Mistral Workflows and Agents
+
+The decision flows live in [`workflows/`](workflows/), a Python worker built on
+Mistral Workflows. The Node API and both web apps stay where they are; the
+workflows are the brains behind them, and every step survives a crash because
+each one is recorded in the execution history.
+
+| Workflow | Trigger | Activities, in order | Ends with |
+| --- | --- | --- | --- |
+| `visitor-arrival` | MediaPipe fires at the door, the API calls `POST /v1/workflows/visitor-arrival/execute` | describe the snapshot (Mistral vision) → match the face-api.js descriptor → transcribe the intercom (Voxtral) → Le Chonk decides who it is for and what to say → post the visit (pushed to the resident over `WS /live`) → speak the reply → log | **waits for the `resident-decision` signal** from `POST /visits/{id}/decision`; a timeout declines |
+| `parcel-arrival` | Parcel photographed at the desk | read the label (Mistral vision) → match the flat → Le Chonk writes the notice → notify the resident on their channel → log | — |
+| `nightly-digest` | Scheduled, `0 19 * * *` in `Europe/London` | pull the day's events from the API → Le Chonk writes the digest → post it → log | — |
+
+Agents: Le Chonk, inside the activities, runs on the **Mistral Agents SDK**
+(durable agents are being deprecated), so the decision prompt, tools and model
+stay versioned with the workflow that calls them.
+
+The vision model never identifies anyone. Recognition is face-api.js
+descriptors on the concierge device, only for residents who tapped
+"that was me"; the vision model describes the scene and reads parcel labels.
+
+### Run the workflows worker
+
+```bash
+cd workflows
+uv sync
+cp .env.example .env          # then set MISTRAL_API_KEY
+uv run python -m worker.entrypoints.worker
+```
+
+With the Mistral CLI installed, `mistral dev` from `workflows/` does the same
+and restarts on file changes. **The worker must be running**: an execution only
+progresses while a worker is up.
+
+Start an execution, the way the API does it:
+
+```bash
+uv run python scripts/run_workflow.py visitor-arrival --input fixtures/visitor_input.json
+```
+
+Then watch it in Studio: **Studio → Workflows → Executions**, where each run
+shows its activities, the signal it is waiting on, and the result.
+
+Offline, and in CI, everything runs from recorded activity results:
+
+```bash
+WORKFLOWS_REPLAY=1 uv run python -m worker.entrypoints.worker
+```
 
 ## Run Locally
 
 ### Prerequisites
 
 - Node.js 22.0.0+
+- Python 3.12+ and [uv](https://docs.astral.sh/uv/) (for the workflows worker)
 - Git
 - GitHub CLI (`gh`)
 
@@ -114,15 +165,20 @@ npm run dev
 
 # Run tests
 npm test
+
+# Run the workflows worker (in a second terminal)
+cd workflows && uv sync && uv run python -m worker.entrypoints.worker
 ```
 
 ### Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `MISTRAL_API_KEY` | Yes | API key for Mistral AI services |
+| `MISTRAL_API_KEY` | Yes | API key for Mistral AI services and Studio. Never committed. |
 | `PORT` | No | Server port (default: 3000) |
 | `NODE_ENV` | No | Environment (default: development) |
+| `LE_CONCIERGE_API_URL` | No | Node API base URL used by the workflows worker (default: `http://localhost:3000`) |
+| `WORKFLOWS_REPLAY` | No | `1` runs every workflow activity from recorded fixtures, offline |
 
 ## Privacy and Limitations
 

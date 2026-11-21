@@ -11,7 +11,8 @@
     "start": "NODE_ENV=production node server/index.js",
     "test": "node --test",
     "test:watch": "node --test --watch",
-    "lint": "echo \"Linting...\" && node --check server/**/*.js apps/**/*.js",
+    "smoke": "node --test test/smoke.test.js",
+    "lint": "echo Linting... && node --check server/**/*.js apps/**/*.js",
     "prep": "npm install"
   },
   "keywords": [
