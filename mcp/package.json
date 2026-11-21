@@ -1,0 +1,18 @@
+{
+  "name": "le-concierge-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Read-only MCP server so Mistral Vibe can ask the Le Concierge building API who is in, what happened and which parcels are waiting",
+  "type": "module",
+  "bin": { "le-concierge-mcp": "index.js" },
+  "main": "index.js",
+  "engines": { "node": ">=22.0.0" },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2"
+  },
+  "license": "MIT"
+}
