@@ -1,4 +1,7 @@
 {
   "text": "Come in, 12. The door is open.",
-  "audio_base64": ""
+  "model": "voxtral-mini-tts-latest",
+  "voice_id": "gb_jane_neutral",
+  "audio_base64": "",
+  "audio_bytes": 15348
 }

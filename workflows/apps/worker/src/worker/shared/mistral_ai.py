@@ -193,7 +193,19 @@ async def synthesize_reply(settings: Settings, text_value: str) -> dict[str, Any
         encoded = base64.b64encode(bytes(audio)).decode("ascii")
     else:  # pragma: no cover - shape depends on the SDK version
         encoded = ""
-    result = {"text": text_value, "audio_base64": encoded}
+    try:
+        decoded_bytes = len(base64.b64decode(encoded)) if encoded else 0
+    except (ValueError, TypeError):  # pragma: no cover - defensive
+        decoded_bytes = 0
+    result = {
+        "text": text_value,
+        "model": settings.speech_model,
+        "voice_id": settings.speech_voice_id,
+        "audio_base64": encoded,
+        # Bytes of audio actually synthesized: the number that shows, in an
+        # activity output, whether the speech model ran or a fixture answered.
+        "audio_bytes": decoded_bytes,
+    }
     if _should_record():
         save_fixture(settings, "speech", result)
     return result
