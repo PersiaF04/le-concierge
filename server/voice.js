@@ -18,6 +18,8 @@ const DOOR_ORIGINS = [
   // Vercel previews: le-concierge-door-<hash>-<team>.vercel.app, -git-<branch>-…
   /^https:\/\/le-concierge-door-[a-z0-9-]+\.vercel\.app$/,
   /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/,
+  // The apps served from harmony through Tailscale Funnel (backup host while Vercel is rate-limited).
+  /^https:\/\/harmony\.tailb80b97\.ts\.net:8443$/,
 ];
 
 export const INSTRUCTIONS = `You are Le Concierge, the front-desk concierge of a residential building in London, speaking through the intercom at the front door.
