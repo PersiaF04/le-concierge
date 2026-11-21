@@ -308,6 +308,38 @@ If the session cannot be created or connected, the door falls back to the
 record-and-reply pipeline (six seconds of audio to `POST /arrivals`, then the
 workflow's Voxtral wav). The console says which path ran.
 
+### The demo stage
+
+#### `GET /executions/:id/steps`
+
+Used by the door app's `#stage` page (`server/stage.js`). Reads
+`GET {MISTRAL_API_URL}/v1/workflows/executions/{id}/history` with
+`MISTRAL_API_KEY` and answers one workflow step per activity:
+
+```json
+{
+  "executionId": "…",
+  "steps": [
+    { "activity": "describe_snapshot", "status": "completed", "at": "…", "model": "mistral-small-latest" },
+    { "activity": "post_visit", "status": "completed", "at": "…" }
+  ],
+  "waiting": true,
+  "finished": false
+}
+```
+
+`status` is `scheduled`, `started`, `completed` or `failed`. `model` is the
+model an activity's result names, else the activity's default. `waiting` is
+true while the run sits on the `resident-decision` wait (a `TIMER_STARTED`
+with no signal or fired timer after it); `finished` once the execution has
+completed, failed or been terminated. Answers are cached for about 700 ms per
+execution, so a stage polling every second makes at most one Mistral call per
+poll. `503` without a key, `400` for a malformed id, `404` when Mistral does
+not know the execution, `502` for other Mistral errors.
+
+The stage finds the latest visit and its `executionId` on `WS /live?scope=door`
+and polls this route every second until `finished`.
+
 ### Live updates
 
 #### `WS /live?flat=12`, `WS /live?scope=door&door=<id>` and `WS /live?scope=door`
