@@ -45,6 +45,8 @@ const events = [];
 const parcels = [];
 /** @type {Set<import('ws').WebSocket>} */
 const clients = new Set();
+/** @type {Map<string, Buffer>} visit_id -> the wav Voxtral streamed for it */
+const audioBlobs = new Map();
 
 // ============================================================================
 // Helpers
@@ -249,6 +251,8 @@ app.post('/intercom/speak', (req, res) => {
     chunks: body.chunks ?? null,
     firstChunkMs: body.first_chunk_ms ?? null,
     audioBytes: body.audio_bytes ?? null,
+    gainDb: body.gain_db ?? null,
+    peakDbfs: body.peak_dbfs ?? null,
     played: true,
     // Voxtral did not report a duration, so it is derived from the wav it
     // streamed: 24 kHz, 16-bit, mono = 48,000 bytes per second.
@@ -260,6 +264,14 @@ app.post('/intercom/speak', (req, res) => {
           : null,
     at: nowIso(),
   };
+  // The wav itself never goes into a socket frame: it is stored under the visit
+  // and fetched once by the door when it speaks.
+  const encoded = typeof body.audio_base64 === 'string' ? body.audio_base64 : '';
+  if (visitId && encoded) {
+    audioBlobs.set(visitId, Buffer.from(encoded, 'base64'));
+    speech.audioUrl = '/intercom/audio/' + visitId + '.wav';
+  }
+
   if (visitId && visits.has(visitId)) {
     const visit = visits.get(visitId);
     visit.speech = speech;
@@ -356,6 +368,15 @@ app.post('/events', (req, res) => {
   }
 
   res.status(201).json({ stored: true, event });
+});
+
+app.get('/intercom/audio/:file', (req, res) => {
+  const visitId = String(req.params.file).replace(/.wav$/, '');
+  const wav = audioBlobs.get(visitId);
+  if (!wav) return res.status(404).json({ error: 'no audio for that visit' });
+  res.setHeader('content-type', 'audio/wav');
+  res.setHeader('cache-control', 'no-store');
+  res.send(wav);
 });
 
 app.get('/presence', (req, res) => {

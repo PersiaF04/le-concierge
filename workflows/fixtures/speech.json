@@ -6,7 +6,11 @@
   "streaming_mode": "responsive",
   "response_format": "wav",
   "chunks": 5,
-  "first_chunk_ms": 1062.7,
+  "first_chunk_ms": 1004,
   "audio_base64": "",
-  "audio_bytes": 88364
+  "audio_bytes": 96044,
+  "normalised": true,
+  "peak_dbfs_before": -7.1,
+  "peak_dbfs": -1,
+  "gain_db": 6.1
 }

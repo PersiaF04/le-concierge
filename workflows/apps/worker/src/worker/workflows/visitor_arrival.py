@@ -105,6 +105,8 @@ async def speak_reply(reply: dict[str, Any]) -> dict[str, Any]:
     audio = await mistral_ai.synthesize_reply(settings, reply["text"])
     # The API attaches what was said to the right visit, so the resident's
     # screen can show the speech facts of this execution and no other.
+    # The wav travels with the facts: the door plays Voxtral's own audio rather
+    # than a browser voice that only imitates it.
     played = await api.speak_at_intercom(settings, {**audio, "visit_id": reply.get("visit_id")})
     return {
         "text": audio.get("text"),
@@ -117,6 +119,8 @@ async def speak_reply(reply: dict[str, Any]) -> dict[str, Any]:
         "chunks": audio.get("chunks"),
         "first_chunk_ms": audio.get("first_chunk_ms"),
         "audio_bytes": audio.get("audio_bytes", 0),
+        "gain_db": audio.get("gain_db"),
+        "peak_dbfs": audio.get("peak_dbfs"),
         "played": played.get("played"),
         "duration_ms": played.get("duration_ms"),
     }

@@ -207,7 +207,7 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
         ) : null}
 
         {camera.state === "live" ? (
-          <video className="camera-preview" ref={camera.videoRef} muted playsInline />
+          <video className="camera-preview" ref={camera.attach} muted playsInline />
         ) : null}
 
         {camera.state === "denied" || camera.state === "unsupported" ? (

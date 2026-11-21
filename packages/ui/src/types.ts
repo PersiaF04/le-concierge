@@ -43,6 +43,12 @@ export interface VisitSpeech {
   chunks: number | null;
   firstChunkMs: number | null;
   audioBytes: number | null;
+  /** dB of peak normalisation applied to the wav; null when it arrived loud. */
+  gainDb?: number | null;
+  /** Peak of the normalised wav, in dBFS. */
+  peakDbfs?: number | null;
+  /** Where the API serves the wav, when it kept one. */
+  audioUrl?: string | null;
   played: boolean;
   durationMs: number | null;
   at?: string;
@@ -81,6 +87,12 @@ export interface SpeechReport {
   chunks: number;
   firstChunkMs: number | null;
   audioBytes: number;
+  /** dB of peak normalisation applied to the wav; null when it arrived loud. */
+  gainDb?: number | null;
+  /** Peak of the normalised wav, in dBFS. */
+  peakDbfs?: number | null;
+  /** Where the API serves the wav, when it kept one. */
+  audioUrl?: string | null;
   played: boolean;
   durationMs: number;
 }

@@ -33,7 +33,9 @@ export const recordedVisit: Visit = {
 
 /**
  * What `speak_reply` returned on the realtime endpoint: Voxtral streamed the
- * reply in five deltas, the first after 1.06 s, 88,364 bytes of wav in total.
+ * reply in five deltas, the first after 1.0 s, 96,044 bytes of wav in total.
+ * The wav arrived peaking at -7.1 dBFS and the worker raised it to -1.0, which
+ * is the +6.1 dB the door's record line quotes.
  */
 export const recordedSpeech: SpeechReport = {
   model: "voxtral-mini-tts-3-0-13",
@@ -41,10 +43,12 @@ export const recordedSpeech: SpeechReport = {
   transport: "realtime",
   streamingMode: "responsive",
   chunks: 5,
-  firstChunkMs: 1062.7,
-  audioBytes: 88364,
+  firstChunkMs: 1004.0,
+  audioBytes: 96044,
+  gainDb: 6.1,
+  peakDbfs: -1.0,
   played: true,
-  durationMs: 2100,
+  durationMs: 2001,
 };
 
 export const recordedParcels: Parcel[] = [
@@ -70,6 +74,12 @@ async function json<T>(path: string, init?: RequestInit): Promise<T | null> {
   } catch {
     return null;
   }
+}
+
+/** Absolute URL for a visit's wav, or null when the API kept no audio. */
+export function speechAudioUrl(speech: { audioUrl?: string | null } | null | undefined): string | null {
+  if (!speech?.audioUrl) return null;
+  return speech.audioUrl.startsWith("http") ? speech.audioUrl : `${API ?? ""}${speech.audioUrl}`;
 }
 
 export async function fetchCurrentVisit(flat: string): Promise<Visit> {

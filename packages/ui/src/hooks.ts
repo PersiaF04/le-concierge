@@ -25,8 +25,13 @@ export function useTheme(): { theme: Theme; toggle: () => void } {
 export type CameraState = "idle" | "asking" | "live" | "denied" | "unsupported";
 
 export function useWebcam() {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  /**
+   * A hidden element that always holds the stream. Capture reads from here, so
+   * a photograph never depends on which <video> happens to be mounted: the
+   * visible ones only mount once the state is already "live".
+   */
+  const sinkRef = useRef<HTMLVideoElement | null>(null);
   const [state, setState] = useState<CameraState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [shot, setShot] = useState<string | null>(null);
@@ -34,7 +39,23 @@ export function useWebcam() {
   const stop = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    if (sinkRef.current) {
+      sinkRef.current.srcObject = null;
+      sinkRef.current = null;
+    }
     setState("idle");
+  }, []);
+
+  /**
+   * A ref for the visible <video> elements. React calls it when one mounts —
+   * which is after start() set the state — so this is where the stream lands.
+   */
+  const attach = useCallback((element: HTMLVideoElement | null) => {
+    if (!element || !streamRef.current) return;
+    if (element.srcObject !== streamRef.current) {
+      element.srcObject = streamRef.current;
+    }
+    void element.play().catch(() => {});
   }, []);
 
   const start = useCallback(async () => {
@@ -50,10 +71,12 @@ export function useWebcam() {
         audio: false,
       });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch(() => {});
-      }
+      const sink = sinkRef.current ?? document.createElement("video");
+      sink.muted = true;
+      sink.playsInline = true;
+      sink.srcObject = stream;
+      sinkRef.current = sink;
+      await sink.play().catch(() => {});
       setState("live");
     } catch (cause) {
       setState("denied");
@@ -62,7 +85,7 @@ export function useWebcam() {
   }, []);
 
   const capture = useCallback((): string | null => {
-    const video = videoRef.current;
+    const video = sinkRef.current;
     if (!video || !video.videoWidth) return null;
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
@@ -75,7 +98,7 @@ export function useWebcam() {
 
   useEffect(() => stop, [stop]);
 
-  return { videoRef, state, error, shot, start, stop, capture, reset: () => setShot(null) };
+  return { attach, state, error, shot, start, stop, capture, reset: () => setShot(null) };
 }
 
 /** Seconds left before the door stays shut. Counts down from the server's timeout. */

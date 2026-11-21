@@ -10,6 +10,7 @@ import {
   openLive,
   recordedSpeech,
   recordedVisit,
+  speechAudioUrl,
   startArrival,
   useTheme,
   useWebcam,
@@ -36,11 +37,16 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
   const [gaze, setGaze] = useState({ x: 0, y: 0 });
   const [notice, setNotice] = useState<string | null>(null);
   const talkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const stopSpeech = useCallback(() => {
     if (talkTimer.current) clearTimeout(talkTimer.current);
     talkTimer.current = null;
     window.speechSynthesis?.cancel();
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
     setSpeaking(false);
   }, []);
 
@@ -48,6 +54,7 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
     () => () => {
       if (talkTimer.current) clearTimeout(talkTimer.current);
       window.speechSynthesis?.cancel();
+      audioRef.current?.pause();
     },
     [],
   );
@@ -107,13 +114,15 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
   }, [shot]);
 
   /**
-   * The face moves for as long as the sentence would take, whether or not this
-   * browser has a voice: a silent laptop should still look like it is talking,
-   * and the notice says which of the two just happened.
+   * The browser's own voice, used only when there is no Voxtral wav to play.
+   * The notice names the stand-in rather than passing it off as the model, and
+   * the face moves for as long as the sentence would take either way.
    */
-  const speak = useCallback(() => {
-    stopSpeech();
-    setNotice(null);
+  const speakWithBrowser = useCallback(() => {
+    if (typeof window.speechSynthesis === "undefined") {
+      setNotice("No speech voice in this browser, so the face mimes the sentence.");
+      return;
+    }
     const words = said.trim().split(/\s+/).length;
     const duration = Math.min(9000, Math.max(1700, words * 340));
     setSpeaking(true);
@@ -121,11 +130,6 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
       setSpeaking(false);
       setSpoken(true);
     }, duration);
-
-    if (typeof window.speechSynthesis === "undefined") {
-      setNotice("No speech voice in this browser, so the face mimes the sentence.");
-      return;
-    }
 
     const utterance = new SpeechSynthesisUtterance(said);
     utterance.lang = "en-GB";
@@ -143,6 +147,44 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
     };
     window.speechSynthesis.speak(utterance);
   }, [said, stopSpeech]);
+
+  /**
+   * Say the reply. Voxtral's own wav comes first: it is peak-normalised to
+   * -1 dBFS by the worker and played at volume 1, so what the visitor hears is
+   * the model, at the loudest level that does not clip. The browser voice is
+   * only the stand-in when the API kept no audio for this execution.
+   */
+  const speak = useCallback(() => {
+    stopSpeech();
+    setNotice(null);
+    const source = speechAudioUrl(visit.speech);
+
+    if (!source) {
+      setNotice("No wav on this execution, so the browser voice reads the reply.");
+      speakWithBrowser();
+      return;
+    }
+
+    const audio = new Audio(source);
+    audio.volume = 1;
+    audioRef.current = audio;
+    audio.onended = () => {
+      audioRef.current = null;
+      setSpeaking(false);
+      setSpoken(true);
+    };
+    audio.onerror = () => {
+      audioRef.current = null;
+      setNotice("The wav did not load, so the browser voice reads the reply.");
+      speakWithBrowser();
+    };
+    setSpeaking(true);
+    void audio.play().catch(() => {
+      audioRef.current = null;
+      setNotice("The browser blocked playback, so it reads the reply itself.");
+      speakWithBrowser();
+    });
+  }, [speakWithBrowser, stopSpeech, visit.speech]);
 
   function takePhoto() {
     const data = camera.capture();
@@ -249,7 +291,7 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
           {shot ? (
             <img src={shot} alt="The visitor as this camera sees them" />
           ) : camera.state === "live" ? (
-            <video className="door-video" ref={camera.videoRef} muted playsInline />
+            <video className="door-video" ref={camera.attach} muted playsInline />
           ) : (
             <div className="shot-empty">
               <span className="mono small">the door has no photograph yet</span>
@@ -271,7 +313,7 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
                 {camera.state === "asking" ? "asking for the camera…" : "Open the camera"}
               </button>
             )}
-            {camera.state === "live" ? <video className="camera-preview" ref={camera.videoRef} muted playsInline /> : null}
+            {camera.state === "live" ? <video className="camera-preview" ref={camera.attach} muted playsInline /> : null}
           </div>
           {camera.state === "denied" || camera.state === "unsupported" ? (
             <p className="small muted">
@@ -319,6 +361,10 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
             <b>
               {bytesLabel(speech.audioBytes)} · {speech.chunks} chunks
             </b>
+          </div>
+          <div className="record-line">
+            <span>gain</span>
+            <b>{speech.gainDb ? `${speech.gainDb > 0 ? "+" : ""}${speech.gainDb} dB` : "as received"}</b>
           </div>
           <div className="record-line">
             <span>first chunk</span>

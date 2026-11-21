@@ -102,7 +102,7 @@ export default function MeScreen({
           {camera.shot ? (
             <img src={camera.shot} alt="The portrait you just took" />
           ) : camera.state === "live" ? (
-            <video ref={camera.videoRef} muted playsInline />
+            <video ref={camera.attach} muted playsInline />
           ) : (
             <div className="shot-empty" aria-hidden="true">
               <span className="mono small">portrait — none yet</span>
