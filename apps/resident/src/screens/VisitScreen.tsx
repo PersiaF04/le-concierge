@@ -5,6 +5,7 @@ import {
   confirmThatWasMe,
   distanceLabel,
   fetchCurrentVisit,
+  fetchPendingVisits,
   fetchSnapshot,
   formatTime,
   openLive,
@@ -28,6 +29,8 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
   const [remembered, setRemembered] = useState(false);
   /** The last photograph either surface took, pushed over the socket. */
   const [remoteShot, setRemoteShot] = useState<Snapshot | null>(null);
+  /** How many other people are at the door right now. */
+  const [others, setOthers] = useState(0);
   const camera = useWebcam();
 
   useEffect(() => {
@@ -49,6 +52,16 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
       link.close();
     };
   }, [resident.flat]);
+
+  useEffect(() => {
+    let alive = true;
+    void fetchPendingVisits(resident.flat).then((queue) => {
+      if (alive) setOthers(queue.filter((entry) => entry.id !== visit?.id).length);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [resident.flat, visit?.id]);
 
   const waiting = visit?.status === "pending_decision";
   const left = useCountdown(visit?.timeoutSeconds ?? 0, Boolean(waiting));
@@ -146,6 +159,11 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
         </div>
 
         <h2 id="entry-title">{waiting ? "Someone is at the door." : "An entry in the log."}</h2>
+        {others > 0 ? (
+          <p className="small muted queue-count">
+            {others === 1 ? "one more person is waiting" : `${others} more people are waiting`}
+          </p>
+        ) : null}
 
         {visit.transcript ? (
           <blockquote className="quote">“{visit.transcript}”</blockquote>

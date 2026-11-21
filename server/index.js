@@ -26,6 +26,10 @@ const MISTRAL_API_URL = (process.env.MISTRAL_API_URL || 'https://api.mistral.ai'
 const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY || '';
 const WORKFLOW_NAME = process.env.VISITOR_WORKFLOW || 'visitor-arrival';
 const DECISION_TIMEOUT_SECONDS = Number(process.env.VISITOR_DECISION_TIMEOUT_SECONDS || 60);
+// A visit still "waiting" long after its own timeout means nobody is coming
+// back for it — an execution that died, or a demo from an hour ago. It is swept
+// out of the queue rather than left to inflate it.
+const VISIT_TTL_SECONDS = Number(process.env.VISIT_TTL_SECONDS || '300');
 
 if (!MISTRAL_API_KEY && NODE_ENV !== 'test') {
   console.warn('⚠️  MISTRAL_API_KEY is not set: POST /arrivals and decision signals will fail.');
@@ -102,24 +106,43 @@ function publicVisit(visit) {
   };
 }
 
-async function mistral(path, body) {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * One call to the Mistral API, with the patience a doorbell needs.
+ *
+ * Three visitors ringing within four seconds is a normal evening, and the API
+ * answers 429 when executions are started in a burst. Retrying is the honest
+ * fix: the alternative is a visit that silently becomes a "fallback" and never
+ * reaches the resident.
+ */
+async function mistral(path, body, { attempts = 4 } = {}) {
   if (!MISTRAL_API_KEY) throw new Error('MISTRAL_API_KEY is not set on the server');
-  const response = await fetch(`${MISTRAL_API_URL}${path}`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${MISTRAL_API_KEY}`, 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  let parsed = null;
-  try {
-    parsed = text ? JSON.parse(text) : null;
-  } catch {
-    parsed = { raw: text.slice(0, 400) };
+
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const response = await fetch(`${MISTRAL_API_URL}${path}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${MISTRAL_API_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const text = await response.text();
+    let parsed = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = { raw: text.slice(0, 400) };
+    }
+
+    if (response.ok) return parsed;
+
+    lastError = new Error(`${path} -> ${response.status}: ${JSON.stringify(parsed).slice(0, 300)}`);
+    const retryable = response.status === 429 || response.status >= 500;
+    if (!retryable || attempt === attempts) throw lastError;
+    console.warn(`retrying ${path} after ${response.status} (attempt ${attempt})`);
+    await sleep(600 * 2 ** (attempt - 1));
   }
-  if (!response.ok) {
-    throw new Error(`${path} -> ${response.status}: ${JSON.stringify(parsed).slice(0, 400)}`);
-  }
-  return parsed;
+  throw lastError ?? new Error(`${path} failed`);
 }
 
 /** Start one execution and keep hold of its id, which is what the signal needs. */
@@ -138,6 +161,21 @@ async function startArrival({ flat = null, visitId, snapshotUrl, audioUrl, face 
     execution?.execution_id ?? execution?.id ?? execution?.run_id ?? execution?.execution?.id ?? null;
   return { execution, executionId };
 }
+
+/** Expire anything that can no longer be answered, and tell the sockets. */
+function sweepStaleVisits() {
+  const cutoff = Date.now() - VISIT_TTL_SECONDS * 1000;
+  for (const visit of visits.values()) {
+    const waiting = visit.status === 'arriving' || visit.status === 'pending_decision';
+    if (!waiting) continue;
+    if (new Date(visit.at).getTime() >= cutoff) continue;
+    visit.status = 'expired';
+    visit.decidedAt = nowIso();
+    broadcast(publicVisit(visit));
+  }
+}
+
+setInterval(sweepStaleVisits, 15000).unref();
 
 // ============================================================================
 // App
@@ -213,8 +251,9 @@ app.post('/arrivals', async (req, res) => {
     res.status(201).json({ visit_id: visitId, execution_id: executionId, execution });
   } catch (error) {
     visit.status = 'fallback';
+    visit.error = String(error.message || error).slice(0, 200);
     broadcast(publicVisit(visit));
-    res.status(502).json({ visit_id: visitId, error: String(error.message || error) });
+    res.status(502).json({ visit_id: visitId, error: visit.error });
   }
 });
 
@@ -333,9 +372,13 @@ app.post('/visits/:id/decision', async (req, res) => {
 // ── reads the apps and the worker need ─────────────────────────────────────
 
 app.get('/visits', (req, res) => {
+  sweepStaleVisits();
   const flat = req.query.flat ? String(req.query.flat) : null;
   const status = req.query.status ? String(req.query.status) : null;
-  const wanted = status === 'pending' ? new Set(['pending_decision', 'arriving']) : null;
+  const waiting = status === 'pending' || req.query.waiting === '1';
+  const wanted = waiting ? new Set(['pending_decision', 'arriving']) : null;
+  // ?waiting=1 wants the whole queue; ?status=pending is the older single visit.
+  const asList = req.query.waiting === '1' || req.query.list === '1';
 
   const list = [...visits.values()]
     .filter((visit) => (flat ? String(visit.flat) === flat : true))
@@ -343,7 +386,7 @@ app.get('/visits', (req, res) => {
     .sort((a, b) => String(b.at).localeCompare(String(a.at)))
     .map(publicVisit);
 
-  if (req.query.status === 'pending') {
+  if (waiting && !asList) {
     return res.json(list[0] ?? null);
   }
   res.json(list);

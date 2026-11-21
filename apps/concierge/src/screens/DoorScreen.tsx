@@ -5,6 +5,7 @@ import {
   confidenceLabel,
   distanceLabel,
   fetchCurrentVisit,
+  fetchPendingVisits,
   fetchSnapshot,
   formatTime,
   msLabel,
@@ -36,6 +37,8 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
   const [starting, setStarting] = useState(false);
   /** The photograph flat 12 just took on its phone, pushed over the socket. */
   const [phoneShot, setPhoneShot] = useState<Snapshot | null>(null);
+  /** Everyone waiting right now, newest first: the desk's queue. */
+  const [queue, setQueue] = useState<Visit[]>([]);
   const [speaking, setSpeaking] = useState(false);
   const [spoken, setSpoken] = useState(false);
   const [shot, setShot] = useState<string | null>(() => loadDoorShot());
@@ -76,6 +79,9 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
       if (!open || current.id === recordedVisit.id) return;
       setVisit(current);
     });
+    void fetchPendingVisits().then((waiting) => {
+      if (open) setQueue(waiting);
+    });
     void fetchSnapshot("12").then((snapshot) => {
       if (open && snapshot) setPhoneShot(snapshot);
     });
@@ -84,8 +90,28 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
       (next) => {
         if (!open) return;
         setLive("on");
-        setSpoken(false);
-        setVisit({ ...next, mode: "workflow" });
+        // Which visit the face is talking about: the one on screen, or the one
+        // that just got an answer — because that is the one the door must say.
+        // A different visitor waiting in the queue does not steal the screen.
+        setVisit((focused) => {
+          const settled = focused.status !== "arriving" && focused.status !== "pending_decision";
+          const answered = Boolean(next.speech?.audioUrl);
+          if (focused.id === next.id || answered || settled) {
+            setSpoken(false);
+            return { ...next, mode: "workflow" };
+          }
+          return focused;
+        });
+        // One frame per change, so the queue is maintained rather than
+        // re-fetched. A Map keeps it keyed by visit id: a frame that arrives
+        // twice can never show up as two visitors.
+        setQueue((waiting) => {
+          const rows = new Map(waiting.map((entry) => [entry.id, entry]));
+          const stillWaiting = next.status === "pending_decision" || next.status === "arriving";
+          if (stillWaiting) rows.set(next.id, { ...next, mode: "workflow" as const });
+          else rows.delete(next.id);
+          return [...rows.values()].sort((a, b) => String(b.at).localeCompare(String(a.at)));
+        });
       },
       // A photograph from the phone lands here and stops: the door shows it
       // without taking one of its own.
@@ -126,6 +152,18 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
       status: "arriving",
       mode: "workflow",
     }));
+    setQueue((waiting) => {
+      const rows = new Map(waiting.map((entry) => [entry.id, entry]));
+      rows.set(created.visitId, {
+        ...recordedVisit,
+        id: created.visitId,
+        status: "arriving",
+        at: new Date().toISOString(),
+        executionId: created.executionId,
+        mode: "workflow",
+      } as Visit);
+      return [...rows.values()];
+    });
     setNotice("A visitor is here. The workflow is running; flat 12 decides on the phone.");
   }, [shot]);
 
@@ -202,6 +240,19 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
     });
   }, [speakWithBrowser, stopSpeech, visit.speech]);
 
+  /**
+   * Nobody presses a button at an intercom. When the workflow attaches audio to
+   * the visit on screen, the door says it — once per wav, so a re-render or a
+   * socket frame does not repeat the sentence.
+   */
+  const spokenFor = useRef<string | null>(null);
+  useEffect(() => {
+    const url = visit.speech?.audioUrl;
+    if (!url || spokenFor.current === url) return;
+    spokenFor.current = url;
+    speak();
+  }, [speak, visit.speech?.audioUrl]);
+
   function takePhoto() {
     const data = camera.capture();
     if (!data) {
@@ -259,6 +310,42 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
         </div>
       ) : null}
       </div>
+
+      {queue.length ? (
+        <ol className="queue" aria-label="Waiting at the door">
+          <li className="queue-head">
+            <span className="mono small muted">
+              {queue.length === 1 ? "one visitor waiting" : `${queue.length} visitors waiting`}
+            </span>
+          </li>
+          {queue.slice(0, 6).map((entry) => (
+            <li key={entry.id}>
+              <button
+                type="button"
+                className="queue-row"
+                data-active={entry.id === visit.id}
+                onClick={() => {
+                  stopSpeech();
+                  spokenFor.current = null;
+                  setSpoken(false);
+                  setVisit(entry);
+                }}
+              >
+                <span className="mono small">{formatTime(entry.at)}</span>
+                <span className="queue-where">flat {entry.flat ?? "—"}</span>
+                <span className="mono small muted">{entry.status === "arriving" ? "arriving" : "waiting"}</span>
+                <span className="queue-say small">{entry.transcript || entry.reply || "still reading the doorstep"}</span>
+                <span className="mono small">{confidenceLabel(entry.confidence)}</span>
+              </button>
+            </li>
+          ))}
+          {queue.length > 6 ? (
+            <li className="queue-head">
+              <span className="mono small muted">and {queue.length - 6} more</span>
+            </li>
+          ) : null}
+        </ol>
+      ) : null}
 
       <main className="kiosk-main">
         <div className="kiosk-face">

@@ -434,3 +434,50 @@
 @media (max-width: 560px) {
   .live-strip .btn { margin-left: 0; width: 100%; }
 }
+
+/* The queue: who is waiting, in the order they arrived. */
+.queue {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--rule);
+}
+.queue-head {
+  padding: 0.45rem 0 0.3rem;
+}
+.queue-row {
+  display: grid;
+  grid-template-columns: 4.5rem 6rem 5rem minmax(0, 1fr) 4rem;
+  align-items: baseline;
+  gap: var(--s3);
+  width: 100%;
+  text-align: left;
+  padding: 0.45rem 0;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.queue-row:hover { background: var(--paper-2); }
+.queue-row[data-active="true"] {
+  box-shadow: inset 2px 0 0 var(--stamp);
+  padding-left: var(--s2);
+}
+.queue-where { font-weight: 500; }
+.queue-say {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+}
+.queue-row > :last-child { text-align: right; }
+
+@media (max-width: 720px) {
+  .queue-row {
+    grid-template-columns: 3.5rem minmax(0, 1fr) 3.5rem;
+  }
+  .queue-row .mono.muted,
+  .queue-say { display: none; }
+}

@@ -118,6 +118,13 @@ export async function fetchCurrentVisit(flat: string): Promise<Visit> {
  * Ask the API to start a visitor-arrival execution. This is the doorbell: the
  * button the door presses when MediaPipe sees someone (issue #3 will own it).
  */
+/** Everyone waiting at any door, newest first. */
+export async function fetchPendingVisits(flat?: string): Promise<Visit[]> {
+  const query = flat ? `&flat=${encodeURIComponent(flat)}` : "";
+  const list = await json<Visit[]>(`/visits?waiting=1${query}`);
+  return (list ?? []).map((visit) => ({ ...visit, mode: "workflow" as const }));
+}
+
 export async function startArrival(input: {
   flat?: string | null;
   snapshot?: string | null;

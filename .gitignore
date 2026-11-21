@@ -104,7 +104,8 @@ local.env
 *.tsbuildinfo
 
 # the live-loop driver talks to a machine-local browser install
-.web-design/live-loop.mjs
+# .web-design/*.mjs (the drivers talk to a machine-local browser install)
 
 # local staging copies of dist/ for the Vercel deploys
 .deploy/
+.web-design/*.mjs
