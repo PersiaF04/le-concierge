@@ -412,3 +412,45 @@ Use Conventional Commits with the following types: `feat`, `fix`, `docs`, `chore
 **Date:** 2026-11-21
 
 **Author:** @persialewis123
+
+---
+
+## ADR-014: Le Chonk where latency does not matter, Small at the door
+
+**Status:** ✅ Accepted
+
+**Context:**
+The main track is built around Le Chonk (Mistral Large 4). Large 4 reasons by
+default, and the live door decision on it took 74 s, while a visitor waits at
+the intercom. We measured on `mistral-large-latest` with JSON output and a
+realistic door prompt:
+
+| Setting | Result |
+| --- | --- |
+| default (`high`) | 74 s |
+| `reasoning_effort: "none"` | HTTP 400: not supported; Large 4 allows only `low`, `medium`, `high` |
+| `reasoning_effort: "low"` | 6.7 s and 8.0 s, about 600 reasoning tokens, valid JSON |
+
+Under about 2 s would have been fast enough for the door. Low is not.
+
+**Decision:**
+- The live door decision (`decide_visit` in `visitor-arrival`) stays on
+  `DECISION_MODEL=mistral-small-latest`.
+- Le Chonk runs on `CHONK_MODEL=mistral-large-latest` with
+  `CHONK_REASONING_EFFORT=low` for every step where nobody is waiting: the
+  nightly digest (`write_digest`), the parcel notice (`write_notice`) and the
+  new CCTV review (`chonk_review_event`), which flags tailgating, loitering and
+  unanswered doorbell rings as `{flag, severity, note}`.
+- Every Le Chonk step returns its model, so Studio shows `mistral-large-latest`.
+
+**Consequences:**
+- ✅ The door answers quickly; Le Chonk does the thinking that can wait
+- ✅ Models are configurable without code changes
+- ⚠️ The door decision is not made by Large 4. Revisit if a reasoning-off mode
+  or a faster Large 4 appears.
+
+**Alternatives Considered:**
+- Large 4 at the door with `reasoning_effort: "low"` (6.7 to 8.0 s, too slow)
+- Large 4 at the door with reasoning off (`"none"` is rejected)
+
+**Date:** 2026-11-21

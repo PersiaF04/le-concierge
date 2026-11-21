@@ -7,9 +7,9 @@ Four workflows:
 
 | Workflow | Runs when | Activities, in order |
 | --- | --- | --- |
-| `visitor-arrival` | MediaPipe fires at the door | describe snapshot (vision) → match face (face-api.js descriptor) → transcribe intercom (Voxtral) → Le Chonk decides → post visit to the API → **wait for the `resident-decision` signal** (timeout declines) → speak the reply → log |
-| `parcel-arrival` | A parcel reaches the desk | read the label (vision) → match the flat → Le Chonk writes the notice → notify the resident on their channel → log |
-| `nightly-digest` | Scheduled, 19:00 daily | pull the day's events from the API → Le Chonk writes the digest → post it → log |
+| `visitor-arrival` | MediaPipe fires at the door | describe snapshot (vision) → match face (face-api.js descriptor) → transcribe intercom (Voxtral) → the decision model (Small) decides → post visit to the API → **wait for the `resident-decision` signal** (timeout declines) → speak the reply → log |
+| `parcel-arrival` | A parcel reaches the desk | read the label (vision) → match the flat → Le Chonk (Large 4) writes the notice → notify the resident on their channel → log |
+| `nightly-digest` | Scheduled, 19:00 daily | pull the day's events from the API → Le Chonk (Large 4) writes the digest → post it → log |
 | `cctv-event` | MediaPipe sees a person on a CCTV camera | describe the frames (vision) → label the people → write the log line → log it as `cctv.<kind>` |
 
 The vision model never identifies anyone. Recognition is face-api.js
@@ -83,10 +83,14 @@ The browser's MediaPipe gate only sends segments with a person in view. Input:
    reusing a label from `recent_events` when the appearance matches.
 3. `write_event` (`DECISION_MODEL`) writes one past-tense line and picks its
    `kind`: arrival, departure, delivery, doorbell, lift, tailgate or other.
-4. `log_cctv_event` posts it to `POST /events` as `cctv.<kind>`.
+4. `chonk_review_event` (`CHONK_MODEL`, Le Chonk) reviews the event against
+   `recent_events` and flags anything suspicious, such as tailgating, someone
+   loitering, or repeated doorbell rings with no answer. It returns
+   `{flag, severity: low|medium|high, note}` and its model.
+5. `log_cctv_event` posts it to `POST /events` as `cctv.<kind>`, review included.
 
 It returns `{discard, event: {text, kind, people, camera, started_at, ended_at,
-clip_url}, model: {vision, decision}}`. When the frames show nobody it returns
+clip_url, review}, model: {vision, decision, chonk}}`. When the frames show nobody it returns
 `discard: true` and logs nothing.
 
 ## Schedule the digest
@@ -128,7 +132,9 @@ names the model: it is what tells a real model call from a fixture.
 | `WORKFLOWS_FIXTURES_DIR` | `./fixtures` | Where the recordings live |
 | `VISION_MODEL` | `mistral-small-latest` | Describes the door, reads parcel labels (vision-capable) |
 | `TRANSCRIPTION_MODEL` | `voxtral-mini-latest` | Intercom speech to text |
-| `DECISION_MODEL` | `mistral-large-latest` | Le Chonk |
+| `DECISION_MODEL` | `mistral-small-latest` | The live door decision, and CCTV labels and log lines |
+| `CHONK_MODEL` | `mistral-large-latest` | Le Chonk (Large 4): the digest, the parcel notice, the CCTV review |
+| `CHONK_REASONING_EFFORT` | `low` | Reasoning effort for Le Chonk calls (`low`, `medium` or `high`; empty uses the model default) |
 | `SPEECH_MODEL` | `voxtral-mini-tts-3-0` | The reply spoken at the door |
 | `SPEECH_VOICE_ID` | `gb_jane_neutral` | The voice the door speaks in |
 | `SPEECH_REALTIME` | `1` | `1` streams the reply over Voxtral's realtime endpoint, `0` uses the batch endpoint |

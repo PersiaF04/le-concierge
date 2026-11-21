@@ -110,7 +110,8 @@ async def test_parcel_activities_use_fixtures() -> None:
     assert fallback == {"flat": "7", "source": "input"}
 
     message = await parcel_arrival.write_notice({"flat": {"flat": "12"}})
-    assert "concierge desk" in message
+    assert "concierge desk" in message["text"]
+    assert message["model"] == "mistral-large-latest"
 
     delivered = await parcel_arrival.notify({"parcel_id": "parcel_0001"})
     assert delivered["delivered"] is True
@@ -128,7 +129,8 @@ async def test_digest_activities_use_fixtures() -> None:
     assert len(events["events"]) == 3
 
     text = await nightly_digest.write_digest({"day": "2026-11-20"})
-    assert "DPD" in text
+    assert "DPD" in text["text"]
+    assert text["model"] == "mistral-large-latest"
 
     delivered = await nightly_digest.send_digest({"flat": "12"})
     assert delivered["delivered"] is True

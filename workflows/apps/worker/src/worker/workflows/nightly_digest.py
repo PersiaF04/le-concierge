@@ -18,6 +18,16 @@ from ..config import load_settings
 from ..shared import api, mistral_ai
 
 
+def _yesterday(now: dt.datetime) -> str:
+    """The day before ``now``, as an ISO date.
+
+    ``now`` comes from ``workflow.now()``: the sandbox forbids reading
+    the wall clock, because it would not replay deterministically.
+    """
+
+    return (now.date() - timedelta(days=1)).isoformat()
+
+
 class NightlyDigestInput(BaseModel):
     day: str | None = None
     flat: str | None = None
@@ -29,7 +39,9 @@ async def fetch_day_events(day: str, flat: str | None) -> dict[str, Any]:
 
 
 @workflows.activity(start_to_close_timeout=timedelta(seconds=120), retry_policy_max_attempts=3)
-async def write_digest(context: dict[str, Any]) -> str:
+async def write_digest(context: dict[str, Any]) -> dict[str, Any]:
+    """Le Chonk (Mistral Large 4) writes the digest."""
+
     instruction = (
         "Write a short end-of-day digest for one flat: who visited, what was "
         "approved or declined, parcels collected and still waiting. Plain text, "
@@ -59,10 +71,11 @@ async def log_event(event: dict[str, Any]) -> dict[str, Any]:
 class NightlyDigestWorkflow:
     @workflows.workflow.entrypoint
     async def run(self, input: NightlyDigestInput) -> dict[str, Any]:
-        day = input.day or (dt.date.today() - dt.timedelta(days=1)).isoformat()
+        day = input.day or _yesterday(workflows.workflow.now())
         events = await fetch_day_events(day, input.flat)
         context = {"day": day, "flat": input.flat, "events": events}
-        text = await write_digest(context)
+        written = await write_digest(context)
+        text = written["text"]
 
         digest = {
             "flat": input.flat,
@@ -80,6 +93,7 @@ class NightlyDigestWorkflow:
             "digest": text,
             "event_count": len(events.get("events", [])) if isinstance(events, dict) else 0,
             "delivered": delivered,
+            "model": {"chonk": written.get("model")},
         }
         await log_event({"type": "digest.sent", **result})
         return result

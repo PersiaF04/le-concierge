@@ -36,6 +36,8 @@ class Settings:
     vision_model: str
     transcription_model: str
     decision_model: str
+    chonk_model: str
+    chonk_reasoning_effort: str | None
     speech_model: str
     speech_voice_id: str
     speech_realtime: bool
@@ -63,7 +65,15 @@ def load_settings() -> Settings:
         mistral_api_key=os.getenv("MISTRAL_API_KEY") or None,
         vision_model=os.getenv("VISION_MODEL", "mistral-small-latest"),
         transcription_model=os.getenv("TRANSCRIPTION_MODEL", "voxtral-mini-latest"),
-        decision_model=os.getenv("DECISION_MODEL", "mistral-large-latest"),
+        # The live door decision stays on Small: Large 4 reasons by default and
+        # a visitor cannot wait for it. See docs/decisions.md, ADR-014.
+        decision_model=os.getenv("DECISION_MODEL", "mistral-small-latest"),
+        # Le Chonk (Mistral Large 4) for every step where nobody is waiting at
+        # the door: the digest, the parcel notice and the CCTV review.
+        chonk_model=os.getenv("CHONK_MODEL", "mistral-large-latest"),
+        # Large 4 accepts low, medium or high (not none). Low keeps it quick;
+        # an empty value leaves the model's own default (high).
+        chonk_reasoning_effort=os.getenv("CHONK_REASONING_EFFORT", "low").strip() or None,
         # The door speaks through Voxtral's realtime endpoint, so the audio
         # arrives in deltas while the sentence is still being generated.
         speech_model=os.getenv("SPEECH_MODEL", "voxtral-mini-tts-3-0"),
