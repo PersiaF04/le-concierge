@@ -160,6 +160,10 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'content-type');
+  // A page served over https (the Vercel build) reaching an API on localhost is
+  // a "private network" request: Chrome blocks it unless the preflight says yes
+  // here. Without this the deployed apps look live and cannot reach anything.
+  res.header('Access-Control-Allow-Private-Network', 'true');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });

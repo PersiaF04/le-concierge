@@ -105,3 +105,6 @@ local.env
 
 # the live-loop driver talks to a machine-local browser install
 .web-design/live-loop.mjs
+
+# local staging copies of dist/ for the Vercel deploys
+.deploy/
