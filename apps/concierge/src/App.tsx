@@ -24,6 +24,6 @@ export default function App() {
   return surface === "ledger" ? (
     <LedgerScreen onOpenDoor={() => go("door")} />
   ) : (
-    <DoorScreen onOpenLedger={() => go("ledger")} />
+    <DoorScreen />
   );
 }

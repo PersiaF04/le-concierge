@@ -72,157 +72,124 @@
 
 /* ── the door ───────────────────────────────────────────── */
 
-.kiosk {
+/* The door is the face, as large as the screen allows. */
+.door {
+  position: relative;
   min-height: 100dvh;
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: var(--s5) var(--s6) var(--s6);
   display: grid;
-  grid-template-rows: auto 1fr auto;
-  gap: var(--s5);
+  place-items: center;
+  padding: var(--s4);
+  overflow: hidden;
 }
 
-.kiosk-main {
-  display: grid;
-  grid-template-columns: minmax(200px, 300px) minmax(0, 1fr);
-  align-items: stretch;
-  gap: var(--s7);
-}
-
-.kiosk-face {
+.door-stage {
   display: grid;
   justify-items: center;
-  align-content: center;
-  gap: var(--s4);
-  border-right: 1px solid var(--rule);
-  padding-right: var(--s6);
+  gap: clamp(var(--s2), 2vh, var(--s5));
+  width: 100%;
 }
 
-.face { width: min(300px, 100%); height: auto; overflow: visible; }
+.door-face { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 
+.face {
+  display: block;
+  width: min(80vmin, calc(100dvh - 9rem), 920px);
+  height: auto;
+  overflow: visible;
+}
+
+/* The ledger's ink, with a heavier line so it reads from across a lobby. */
 .face-head,
-.face-brow,
-.face-nose,
-.face-mouth {
+.face-line,
+.face-ears path {
   fill: none;
   stroke: var(--ink);
-  stroke-width: 2.4;
+  stroke-width: 4;
   stroke-linecap: round;
+  stroke-linejoin: round;
 }
+
+.face-brows { transition: transform var(--move); }
+.face-eyes { transition: transform 260ms cubic-bezier(0.2, 0, 0, 1); }
 
 .face-eye {
   fill: var(--ink);
-  stroke: none;
   transform-box: fill-box;
   transform-origin: center;
+  transition: r var(--move);
   animation: blink 5.4s infinite;
 }
 
 @keyframes blink {
   0%, 91%, 100% { transform: scaleY(1); }
-  94% { transform: scaleY(0.12); }
+  94% { transform: scaleY(0.1); }
 }
 
-.face-mouth-open {
-  fill: var(--ink);
-  stroke: none;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: talk 240ms steps(4, end) infinite;
+.face-cheek { fill: var(--stamp); opacity: 0.14; }
+
+.face-mouth-open { fill: var(--ink); stroke: var(--ink); stroke-width: 4; stroke-linejoin: round; }
+
+/* Listening: arcs at both ears, pulsing outwards. */
+.face-ears path { opacity: 0; }
+.face[data-mood="listening"] .face-ears path {
+  animation: hear 1.2s ease-out infinite;
+}
+.face[data-mood="listening"] .face-ears path:nth-child(even) { animation-delay: 0.3s; }
+
+@keyframes hear {
+  0% { opacity: 0; }
+  35% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
-@keyframes talk {
-  0% { transform: scaleY(0.45); }
-  50% { transform: scaleY(1.25); }
-  100% { transform: scaleY(0.6); }
+/* Thinking: a thought rising, one bubble at a time. */
+.face-thought circle { fill: var(--ink); opacity: 0; }
+.face[data-mood="thinking"] .face-thought circle {
+  animation: think 1.5s ease-in-out infinite;
+}
+.face[data-mood="thinking"] .face-thought circle:nth-child(2) { animation-delay: 0.25s; }
+.face[data-mood="thinking"] .face-thought circle:nth-child(3) { animation-delay: 0.5s; }
+
+@keyframes think {
+  0%, 100% { opacity: 0.15; }
+  50% { opacity: 1; }
 }
 
-.face-caption { letter-spacing: 0; }
-
-.kiosk-say { display: grid; gap: var(--s4); align-content: center; }
-
-.say-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s3);
-}
-
-.visitor {
-  font-size: var(--step-2);
-  line-height: 1.45;
-  color: var(--ink-2);
-  text-wrap: pretty;
-  border-left: 1.5px solid var(--rule-2);
-  padding-left: var(--s4);
-}
-
-.reply {
-  font-size: var(--step-4);
+/* Subtitles: the reply, large, only while it is said; it fades after. The
+   line keeps its height so the face never jumps. */
+.subtitle {
+  min-height: calc(2 * 1.15em);
+  max-width: 32ch;
+  margin: 0;
+  font-size: clamp(1.5rem, 4.4vmin, 3.25rem);
   line-height: 1.15;
   font-weight: 500;
   letter-spacing: -0.02em;
+  text-align: center;
   text-wrap: balance;
+  opacity: 0;
+  transition: opacity 900ms ease;
 }
+.subtitle[data-show="true"] { opacity: 1; transition-duration: 200ms; }
 
-.say-actions { display: flex; gap: var(--s3); flex-wrap: wrap; }
-
-.stamp[data-status="approved"] { color: var(--approve); }
-.stamp[data-status="declined"],
-.stamp[data-status="expired"] { color: var(--alert); }
-.stamp[data-status="pending_decision"],
-.stamp[data-status="arriving"] { color: var(--stamp); }
-
-.kiosk-foot {
-  display: grid;
-  grid-template-columns: minmax(0, 210px) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.05fr);
-  gap: var(--s5);
-  align-items: start;
-  border-top: 1px solid var(--rule);
-  padding-top: var(--s4);
+/* The desk's one control: invisible until the pointer or focus reaches it. */
+.door-desk {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  padding: var(--s5);
+  opacity: 0;
+  transition: opacity var(--move);
 }
+.door-desk:hover,
+.door-desk:focus-within { opacity: 1; }
 
-.door-plate { margin: 0; display: grid; gap: var(--s2); }
-
-.door-plate img,
-.door-video {
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
-  display: block;
-  border: 1px solid var(--rule-2);
-  background: var(--paper-2);
-  filter: saturate(0.94);
-}
-
-.foot-cam { display: grid; gap: var(--s3); }
-.foot-cam-actions { display: grid; gap: var(--s3); justify-items: start; }
-
-.foot-record { display: grid; gap: var(--s2); }
-
-.speech-record {
-  border-left: 1px solid var(--rule);
-  padding-left: var(--s4);
-}
-
-@media (max-width: 900px) {
-  .kiosk { padding: var(--s4) var(--s4) var(--s5); }
-  .kiosk-main { grid-template-columns: 1fr; gap: var(--s5); }
-  .kiosk-face {
-    border-right: 0;
-    border-bottom: 1px solid var(--rule);
-    padding: 0 0 var(--s4);
-    justify-items: start;
-  }
-  .face { width: 132px; }
-  .kiosk-foot { grid-template-columns: 1fr; gap: var(--s4); }
-  .speech-record {
-    border-left: 0;
-    border-top: 1px solid var(--rule);
-    padding: var(--s3) 0 0;
-  }
-  .visitor { font-size: var(--step-1); }
-  .reply { font-size: var(--step-3); }
+@media (prefers-reduced-motion: reduce) {
+  .face-eye,
+  .face[data-mood] .face-ears path,
+  .face[data-mood] .face-thought circle { animation: none; }
+  .face[data-mood="listening"] .face-ears path,
+  .face[data-mood="thinking"] .face-thought circle { opacity: 1; }
 }
 
 /* ── the log ────────────────────────────────────────────── */
@@ -394,90 +361,4 @@
 @media (max-width: 620px) {
   .log-table th:nth-child(5),
   .log-table td:nth-child(5) { display: none; }
-}
-
-/* The live strip: the doorbell, and whether the socket is up. */
-.door-head {
-  display: grid;
-  gap: var(--s3);
-}
-
-.live-strip {
-  display: flex;
-  align-items: center;
-  gap: var(--s3);
-  flex-wrap: wrap;
-  border-bottom: 1px solid var(--rule);
-  padding: 0.4rem 0 0;
-}
-.live-strip p { margin: 0; }
-.live-strip .btn { margin-left: auto; }
-
-.live-dot {
-  display: inline-block;
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 50%;
-  margin-right: 0.4rem;
-  background: var(--rule-2);
-  vertical-align: baseline;
-}
-.live-dot[data-live="on"] { background: var(--approve); }
-.live-dot[data-live="connecting"] { background: var(--stamp); }
-.live-dot[data-live="off"] { background: var(--alert); }
-
-.btn-small {
-  font-size: 0.8125rem;
-  padding: 0.3rem 0.7rem;
-}
-
-@media (max-width: 560px) {
-  .live-strip .btn { margin-left: 0; width: 100%; }
-}
-
-/* The queue: who is waiting, in the order they arrived. */
-.queue {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  border-top: 1px solid var(--rule);
-}
-.queue-head {
-  padding: 0.45rem 0 0.3rem;
-}
-.queue-row {
-  display: grid;
-  grid-template-columns: 4.5rem 6rem 5rem minmax(0, 1fr) 4rem;
-  align-items: baseline;
-  gap: var(--s3);
-  width: 100%;
-  text-align: left;
-  padding: 0.45rem 0;
-  border: 0;
-  border-bottom: 1px solid var(--rule);
-  background: none;
-  color: var(--ink);
-  font: inherit;
-  cursor: pointer;
-}
-.queue-row:hover { background: var(--paper-2); }
-.queue-row[data-active="true"] {
-  box-shadow: inset 2px 0 0 var(--stamp);
-  padding-left: var(--s2);
-}
-.queue-where { font-weight: 500; }
-.queue-say {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ink-2);
-}
-.queue-row > :last-child { text-align: right; }
-
-@media (max-width: 720px) {
-  .queue-row {
-    grid-template-columns: 3.5rem minmax(0, 1fr) 3.5rem;
-  }
-  .queue-row .mono.muted,
-  .queue-say { display: none; }
 }
