@@ -46,17 +46,10 @@ cd .deploy/concierge && npx vercel deploy --prod --yes --name le-concierge-conci
 
 ## Pointing a deployed build at an API
 
-The apps read the API address in this order:
-
-1. `?api=https://…` on the URL, which is remembered in `localStorage`;
-2. `le-concierge:api` in `localStorage`;
-3. `VITE_API_URL` at build time.
-
-So a deployment can be pointed at a public API without being rebuilt:
-
-```
-https://le-concierge-concierge.vercel.app/?api=https://le-concierge-api.example.com
-```
+The apps read the API address from `VITE_API_URL` at build time, and nothing
+else: there is no `?api=` or `localStorage` override, so a link cannot point a
+door or a phone at another server. To change the API, rebuild with the new
+value.
 
 The WebSocket follows the API's origin (`https` → `wss`), unless
 `VITE_WS_URL` says otherwise.
@@ -77,7 +70,7 @@ refused, so a real deployment needs a really public API.
 2. Run one worker next to it (`uv run python -m worker.entrypoints.worker` with
    `LE_CONCIERGE_API_URL` pointing at that API). It needs no inbound port: it
    dials out to Mistral.
-3. Redeploy the apps with `VITE_API_URL` set, or open them with `?api=`.
+3. Redeploy the apps with `VITE_API_URL` set.
 
 The workflow itself is already deployed in the Mistral workspace: deployment
 `visitor-arrival`, and `GET /v1/workflows/deployments` shows it active whenever a

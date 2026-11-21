@@ -26,6 +26,8 @@ export interface Visit {
   faceDistance: number | null;
   reply: string;
   executionId?: string | null;
+  /** The door page that rang (see `doorId`); null for visits from elsewhere. */
+  doorId?: string | null;
   parcel?: { courier: string; label: string } | null;
   snapshot?: string | null;
   decidedAt?: string | null;

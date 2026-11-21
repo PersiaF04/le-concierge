@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   apiMode,
-  fetchPendingVisits,
+  doorId,
   openLive,
   publishSnapshot,
   recordedVisit,
@@ -14,6 +14,7 @@ import {
 import Face, { gazeFrom, type FaceMood } from "../components/Face";
 import { saveDoorShot } from "../data";
 import { useMicrophone } from "../mic";
+import { openDoorVoice } from "../voice";
 
 /**
  * A visit the door has just rung for. Every field starts empty: the workflow
@@ -33,6 +34,7 @@ function freshVisit(id: string, executionId: string | null): Visit {
     faceDistance: null,
     reply: "",
     executionId,
+    doorId,
     parcel: null,
     snapshot: null,
     speech: null,
@@ -41,6 +43,14 @@ function freshVisit(id: string, executionId: string | null): Visit {
 }
 
 const waiting = (visit: Visit | null) => visit?.status === "arriving" || visit?.status === "pending_decision";
+
+/** End the conversation after this long without anyone saying anything. */
+const SILENCE_MS = 90_000;
+/** How long a line stays up after it was said. */
+const CAPTION_HOLD_MS = 2500;
+
+type VoiceSession = Awaited<ReturnType<typeof openDoorVoice>>;
+type AgentState = "initializing" | "idle" | "listening" | "thinking" | "speaking";
 
 /** Loudness of one analyser frame, 0…1. */
 function loudness(node: AnalyserNode, buffer: Uint8Array<ArrayBuffer>): number {
@@ -58,33 +68,54 @@ function loudness(node: AnalyserNode, buffer: Uint8Array<ArrayBuffer>): number {
  * microphone work in the background; the desk rings the bell with Space, a tap
  * on the face, or the control that appears when the pointer reaches the
  * bottom-left corner. The log lives on its own page (#ledger).
+ *
+ * Live, the bell opens a Mistral Voice Agent conversation (see ../voice.ts). If
+ * that cannot start, the door falls back to the recorded pipeline: listen for
+ * six seconds, post the arrival, and play the workflow's Voxtral reply. Either
+ * way there is one voice, the API's, and no browser speech.
  */
 export default function DoorScreen() {
   useTheme();
   const camera = useWebcam();
   const mic = useMicrophone();
-  /** Live, the door starts empty and follows the workflow; offline it shows the recorded run. */
+  /** Live, the door starts empty and follows only its own visits; offline it shows the recorded run. */
   const [visit, setVisit] = useState<Visit | null>(apiMode === "live" ? null : recordedVisit);
-  /** What the door said: the execution's spoken text wins over the proposal. */
-  const said = visit?.speech?.text ?? visit?.reply ?? "";
   const [ringing, setRinging] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  /** A line on screen with no audio behind it (no wav, or the browser refused to play). */
+  const [captionOnly, setCaptionOnly] = useState(false);
   /** The photograph taken when the bell rang. */
   const [shot, setShot] = useState<string | null>(null);
   const [gaze, setGaze] = useState({ x: 0, y: 0 });
-  const talkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // The live conversation.
+  const [inConversation, setInConversation] = useState(false);
+  const [agentState, setAgentState] = useState<AgentState>("idle");
+  const [visitorTalking, setVisitorTalking] = useState(false);
+  const [toolBusy, setToolBusy] = useState(false);
+  const [agentLine, setAgentLine] = useState("");
+  const [lineHeld, setLineHeld] = useState(false);
+  const sessionRef = useRef<VoiceSession | null>(null);
+  const agentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const silenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const talkingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Playback of the fallback pipeline's wav.
+  const captionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+  /** Visits this page rang for through the fallback: the only ones whose wav it may play. */
+  const ringedFor = useRef(new Set<string>());
   /** The wav the door last said, so a socket frame does not repeat it. */
   const spokenFor = useRef<string | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const samples = useRef(new Uint8Array(1024));
 
-  /**
-   * How loud the reply is right now, for the mouth. With Voxtral's wav it is
-   * read from an AnalyserNode on the audio element; the browser voice gives no
-   * samples, so the mouth gets a speech-like rhythm instead.
-   */
+  /** What the door says: the agent's line in a conversation, else the workflow's reply. */
+  const said = inConversation ? agentLine : (visit?.speech?.text ?? visit?.reply ?? "");
+
+  /** How loud the door is right now, for the mouth. */
   const level = useCallback(() => {
     const node = analyserRef.current;
     if (node) return loudness(node, samples.current);
@@ -94,41 +125,44 @@ export default function DoorScreen() {
 
   /**
    * Browsers only let audio through a Web Audio graph after a gesture, so the
-   * context is made on the first tap or key press at the door.
+   * context is made, or resumed, on every tap or key press at the door.
    */
-  useEffect(() => {
-    const unlock = () => {
-      if (!contextRef.current && typeof AudioContext !== "undefined") contextRef.current = new AudioContext();
-      void contextRef.current?.resume();
-    };
-    window.addEventListener("pointerdown", unlock);
-    window.addEventListener("keydown", unlock);
-    return () => {
-      window.removeEventListener("pointerdown", unlock);
-      window.removeEventListener("keydown", unlock);
-    };
+  const unlockAudio = useCallback(() => {
+    if (!contextRef.current && typeof AudioContext !== "undefined") contextRef.current = new AudioContext();
+    void contextRef.current?.resume();
+    return contextRef.current;
   }, []);
+
+  useEffect(() => {
+    window.addEventListener("pointerdown", unlockAudio);
+    window.addEventListener("keydown", unlockAudio);
+    return () => {
+      window.removeEventListener("pointerdown", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
+    };
+  }, [unlockAudio]);
 
   const stopSpeech = useCallback(() => {
-    if (talkTimer.current) clearTimeout(talkTimer.current);
-    talkTimer.current = null;
-    window.speechSynthesis?.cancel();
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
+    if (captionTimer.current) clearTimeout(captionTimer.current);
+    captionTimer.current = null;
+    try {
+      sourceRef.current?.stop();
+    } catch {
+      /* already stopped */
     }
+    sourceRef.current = null;
     analyserRef.current = null;
     setSpeaking(false);
+    setCaptionOnly(false);
   }, []);
 
-  useEffect(
-    () => () => {
-      if (talkTimer.current) clearTimeout(talkTimer.current);
-      window.speechSynthesis?.cancel();
-      audioRef.current?.pause();
-    },
-    [],
-  );
+  /** No audio to play: the line stays on screen for about as long as it takes to read. */
+  const showCaption = useCallback((text: string) => {
+    const words = text.trim().split(/\s+/).length;
+    setCaptionOnly(true);
+    if (captionTimer.current) clearTimeout(captionTimer.current);
+    captionTimer.current = setTimeout(() => setCaptionOnly(false), Math.min(9000, Math.max(2000, words * 380)));
+  }, []);
 
   /** The camera runs in the background, ready to photograph the doorstep. */
   const { start: startCamera } = camera;
@@ -137,26 +171,15 @@ export default function DoorScreen() {
   }, [startCamera]);
 
   /**
-   * In live mode the door follows the building-wide feed (`/live?scope=door`):
-   * every flat's visits arrive over one socket, and the flat is the one the
-   * workflow decided, never one the door assumed.
+   * In live mode the door follows its own feed (`/live?scope=door&door=<id>`):
+   * only visits this page started reach it, so another open door never speaks.
    */
   useEffect(() => {
     if (apiMode !== "live") return;
     let open = true;
-    void fetchPendingVisits().then((queue) => {
-      if (open && queue[0]) setVisit((focused) => focused ?? queue[0]);
-    });
-    const socket = openLive({ scope: "door" }, (next) => {
-      if (!open) return;
-      // The visit on screen, or the one that just got an answer, because that
-      // is the one the door must say. Another visitor does not steal the face.
-      setVisit((focused) => {
-        if (!focused) return { ...next, mode: "workflow" };
-        const answered = Boolean(next.speech?.audioUrl);
-        if (focused.id === next.id || answered || !waiting(focused)) return { ...next, mode: "workflow" };
-        return focused;
-      });
+    const socket = openLive({ scope: "door", door: doorId }, (next) => {
+      if (!open || next.doorId !== doorId) return;
+      setVisit((focused) => (!focused || focused.id === next.id || !waiting(focused) ? { ...next, mode: "workflow" } : focused));
     });
     return () => {
       open = false;
@@ -164,89 +187,191 @@ export default function DoorScreen() {
     };
   }, []);
 
-  /** The browser's own voice, used only when there is no Voxtral wav to play. */
-  const speakWithBrowser = useCallback(() => {
-    analyserRef.current = null;
-    const words = said.trim().split(/\s+/).length;
-    const duration = Math.min(9000, Math.max(1700, words * 340));
-    setSpeaking(true);
-    talkTimer.current = setTimeout(() => setSpeaking(false), duration);
-    if (typeof window.speechSynthesis === "undefined") return;
-
-    const utterance = new SpeechSynthesisUtterance(said);
-    utterance.lang = "en-GB";
-    utterance.rate = 0.98;
-    utterance.pitch = 0.95;
-    const voice = window.speechSynthesis.getVoices().find((candidate) => candidate.lang.startsWith("en-GB"));
-    if (voice) utterance.voice = voice;
-    utterance.onstart = () => setSpeaking(true);
-    utterance.onend = () => stopSpeech();
-    window.speechSynthesis.speak(utterance);
-  }, [said, stopSpeech]);
-
   /**
-   * Say the reply. Voxtral's own wav comes first, routed through an analyser
-   * so the mouth follows it; the browser voice stands in only when the API
-   * kept no audio for this execution.
+   * Say the workflow's reply (the fallback pipeline). The wav is decoded and
+   * played through the AudioContext the bell press unlocked, so autoplay rules
+   * do not apply and the voice is always Voxtral's. Without a wav, or if the
+   * browser still refuses, the line is shown silently.
    */
-  const speak = useCallback(() => {
+  const speak = useCallback(async () => {
     stopSpeech();
     if (!said) return;
     const source = speechAudioUrl(visit?.speech);
-    if (!source) {
-      speakWithBrowser();
+    const context = contextRef.current;
+    if (!source || !context) {
+      showCaption(said);
       return;
     }
-    const audio = new Audio();
-    // The API allows any origin, so the analyser may read the samples.
-    audio.crossOrigin = "anonymous";
-    audio.src = source;
-    audio.volume = 1;
-    audioRef.current = audio;
-    const context = contextRef.current;
-    if (context?.state === "running") {
-      try {
-        const node = context.createAnalyser();
-        node.fftSize = samples.current.length;
-        context.createMediaElementSource(audio).connect(node);
-        node.connect(context.destination);
-        analyserRef.current = node;
-      } catch {
+    try {
+      await context.resume();
+      const response = await fetch(source);
+      if (!response.ok) throw new Error(`${response.status}`);
+      const buffer = await context.decodeAudioData(await response.arrayBuffer());
+      const node = context.createAnalyser();
+      node.fftSize = samples.current.length;
+      const player = context.createBufferSource();
+      player.buffer = buffer;
+      player.connect(node);
+      node.connect(context.destination);
+      player.onended = () => {
+        if (sourceRef.current !== player) return;
+        sourceRef.current = null;
         analyserRef.current = null;
-      }
+        setSpeaking(false);
+      };
+      sourceRef.current = player;
+      analyserRef.current = node;
+      setSpeaking(true);
+      player.start();
+    } catch (error) {
+      console.warn("[door] could not play the reply; showing it silently", error);
+      showCaption(said);
     }
-    audio.onended = () => {
-      audioRef.current = null;
-      analyserRef.current = null;
-      setSpeaking(false);
-    };
-    audio.onerror = () => {
-      audioRef.current = null;
-      speakWithBrowser();
-    };
-    setSpeaking(true);
-    void audio.play().catch(() => {
-      audioRef.current = null;
-      speakWithBrowser();
-    });
-  }, [said, speakWithBrowser, stopSpeech, visit?.speech]);
+  }, [said, showCaption, stopSpeech, visit?.speech]);
 
   /**
-   * Nobody presses a button at an intercom. When the workflow attaches audio to
-   * the visit on screen, the door says it — once per wav.
+   * When the workflow attaches audio to a visit this page rang for, the door
+   * says it, once per wav. Never during a conversation (the agent speaks then),
+   * and never for a visit the page did not ring for in this load.
    */
   useEffect(() => {
     const url = visit?.speech?.audioUrl;
-    if (!url || spokenFor.current === url) return;
+    if (!url || !visit || spokenFor.current === url) return;
+    if (inConversation || !ringedFor.current.has(visit.id)) return;
     spokenFor.current = url;
-    speak();
-  }, [speak, visit?.speech?.audioUrl]);
+    void speak();
+  }, [inConversation, speak, visit, visit?.speech?.audioUrl]);
+
+  // ── the live conversation ─────────────────────────────────────────────────
+
+  const resetSilence = useCallback(() => {
+    if (silenceTimer.current) clearTimeout(silenceTimer.current);
+    silenceTimer.current = setTimeout(() => {
+      console.info("[door] 90 s of silence, ending the conversation");
+      void sessionRef.current?.close();
+    }, SILENCE_MS);
+  }, []);
+
+  const endConversation = useCallback(() => {
+    for (const timer of [silenceTimer, talkingTimer, holdTimer]) {
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
+    }
+    sessionRef.current = null;
+    const element = agentAudioRef.current;
+    if (element) {
+      element.pause();
+      element.srcObject = null;
+    }
+    analyserRef.current = null;
+    setInConversation(false);
+    setAgentState("idle");
+    setVisitorTalking(false);
+    setToolBusy(false);
+    setLineHeld(false);
+    // The visit ask_resident started is over for this door; a late frame may bring it back.
+    setVisit(null);
+  }, []);
+
+  /** Open a Voice Agent session and wire its events to the face. Throws if it cannot start. */
+  const startConversation = useCallback(async () => {
+    const session = await openDoorVoice({
+      snapshot: () => camera.capture(),
+      onVisit: (id) => {
+        setVisit(freshVisit(id, null));
+      },
+    });
+    sessionRef.current = session;
+
+    session.on("audio_track", ({ track, source }) => {
+      if (source !== "remote") return;
+      const stream = new MediaStream([track]);
+      const element = agentAudioRef.current;
+      const context = contextRef.current;
+      if (context) {
+        try {
+          const node = context.createAnalyser();
+          node.fftSize = samples.current.length;
+          context.createMediaStreamSource(stream).connect(node);
+          analyserRef.current = node;
+        } catch {
+          analyserRef.current = null;
+        }
+      }
+      if (!element) return;
+      element.srcObject = stream;
+      void element
+        .play()
+        .then(() => {
+          // The SDK also attaches the track to an element of its own; this one
+          // is playing, so that one is muted to avoid an echo.
+          const transport = (session as unknown as { _transport?: { _attachedElements?: HTMLMediaElement[] } })
+            ._transport;
+          for (const other of transport?._attachedElements ?? []) other.muted = true;
+        })
+        .catch((error) => console.warn("[door] <audio> refused to play; the SDK's element plays instead", error));
+    });
+
+    session.on("agent_state_changed", ({ state }) => setAgentState(state as AgentState));
+
+    session.on("transcript", ({ role, content, final }) => {
+      resetSilence();
+      if (role === "user") {
+        setVisitorTalking(!final);
+        if (talkingTimer.current) clearTimeout(talkingTimer.current);
+        talkingTimer.current = setTimeout(() => setVisitorTalking(false), 1500);
+        return;
+      }
+      setAgentLine(content);
+      setLineHeld(true);
+      if (holdTimer.current) clearTimeout(holdTimer.current);
+      if (final) holdTimer.current = setTimeout(() => setLineHeld(false), CAPTION_HOLD_MS);
+    });
+
+    session.on("tool_call_started", ({ name }) => {
+      console.info(`[door] tool ${name} started`);
+      setToolBusy(true);
+    });
+    session.on("tool_call_ended", ({ name, status }) => {
+      console.info(`[door] tool ${name} ${status}`);
+      setToolBusy(false);
+      resetSilence();
+    });
+    session.on("unhandled_tool", ({ name }) => console.warn(`[door] the agent asked for an unknown tool: ${name}`));
+    session.on("error", (event) => console.warn("[door] voice agent error", event));
+    session.on("disconnected", ({ reason }) => {
+      console.info(`[door] conversation ended${reason ? ` (${reason})` : ""}`);
+      endConversation();
+    });
+
+    setAgentLine("");
+    setInConversation(true);
+    try {
+      await session.connect();
+    } catch (error) {
+      endConversation();
+      void session.close().catch(() => {});
+      throw error;
+    }
+    resetSilence();
+    void session.wait().then(endConversation, endConversation);
+  }, [camera, endConversation, resetSilence]);
 
   /**
-   * The doorbell: photograph the doorstep, listen for about six seconds, and
-   * start the workflow with both. MediaPipe will ring it when it sees a face
-   * (issue #3).
+   * The fallback doorbell: photograph the doorstep, listen for about six
+   * seconds, and start the workflow with both.
    */
+  const ringRecorded = useCallback(async (photo: string | null) => {
+    const audio = await mic.record();
+    const created = await startArrival({ flat: null, snapshot: photo, audio, doorId });
+    if (!created) return;
+    spokenFor.current = null;
+    ringedFor.current.add(created.visitId);
+    const arrived = freshVisit(created.visitId, created.executionId);
+    // A frame for this visit may already have arrived over the socket.
+    setVisit((focused) => (focused?.id === arrived.id ? focused : arrived));
+  }, [mic]);
+
   const ring = useCallback(async () => {
     setRinging(true);
     stopSpeech();
@@ -255,26 +380,29 @@ export default function DoorScreen() {
       setShot(photo);
       saveDoorShot(photo);
     }
-    // What the visitor says is how the workflow finds the flat.
-    const audio = await mic.record();
-    const created = await startArrival({ flat: null, snapshot: photo, audio });
-    setRinging(false);
-    if (!created) return;
-    spokenFor.current = null;
-    const arrived = freshVisit(created.visitId, created.executionId);
-    // A frame for this visit may already have arrived over the socket.
-    setVisit((focused) => (focused?.id === arrived.id ? focused : arrived));
-  }, [camera, mic, stopSpeech]);
+    try {
+      await startConversation();
+      console.info("[door] path: Mistral Voice Agent");
+    } catch (error) {
+      console.info("[door] path: record-and-reply fallback (voice agent unavailable)", error);
+      await ringRecorded(photo);
+    } finally {
+      setRinging(false);
+    }
+  }, [camera, ringRecorded, startConversation, stopSpeech]);
 
   /**
-   * One gesture for the desk: while listening it ends the recording; offline
-   * it replays the recorded reply; otherwise it rings the bell.
+   * One gesture for the desk: in a conversation it hangs up; while recording
+   * it ends the recording; offline it replays the recorded reply; otherwise it
+   * rings the bell. The gesture also unlocks the audio.
    */
   const press = useCallback(() => {
-    if (mic.state === "recording") mic.stop();
-    else if (apiMode !== "live") speak();
+    unlockAudio();
+    if (sessionRef.current) void sessionRef.current.close();
+    else if (mic.state === "recording") mic.stop();
+    else if (apiMode !== "live") void speak();
     else if (!ringing) void ring();
-  }, [mic, ring, ringing, speak]);
+  }, [mic, ring, ringing, speak, unlockAudio]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -287,20 +415,41 @@ export default function DoorScreen() {
     return () => window.removeEventListener("keydown", onKey);
   }, [press]);
 
-  /** Once the workflow has named a flat, that flat sees who is standing here. */
+  useEffect(
+    () => () => {
+      stopSpeech();
+      void sessionRef.current?.close();
+    },
+    [stopSpeech],
+  );
+
+  /** Once a flat is known, that flat sees who is standing here. */
   const flat = visit?.flat;
   useEffect(() => {
     if (apiMode !== "live" || !flat || !shot) return;
-    void publishSnapshot({ flat, dataUrl: shot, source: "door" });
+    void publishSnapshot({ flat, dataUrl: shot, source: "door", doorId });
   }, [flat, shot]);
 
-  const mood: FaceMood = speaking
-    ? "speaking"
-    : mic.state === "recording"
-      ? "listening"
-      : ringing || (apiMode === "live" && waiting(visit))
-        ? "thinking"
-        : "idle";
+  const agentSpeaking = inConversation && agentState === "speaking";
+  const mood: FaceMood = inConversation
+    ? toolBusy
+      ? "thinking"
+      : agentSpeaking
+        ? "speaking"
+        : visitorTalking
+          ? "listening"
+          : agentState === "thinking"
+            ? "thinking"
+            : "idle"
+    : speaking
+      ? "speaking"
+      : mic.state === "recording"
+        ? "listening"
+        : ringing || (apiMode === "live" && waiting(visit))
+          ? "thinking"
+          : "idle";
+
+  const showLine = inConversation ? agentSpeaking || lineHeld : speaking || captionOnly;
 
   return (
     <div className="door" onPointerMove={(event) => setGaze(gazeFrom(event))}>
@@ -308,14 +457,21 @@ export default function DoorScreen() {
         <div className="door-face" onClick={press}>
           <Face mood={mood} level={level} gaze={gaze} />
         </div>
-        <p className="subtitle" data-show={speaking} aria-live="polite">
+        <p className="subtitle" data-show={showLine && Boolean(said)} aria-live="polite">
           {said}
         </p>
+        <audio ref={agentAudioRef} hidden />
       </main>
 
       <div className="door-desk">
         <button type="button" className="btn-quiet small" onClick={press}>
-          {mic.state === "recording" ? "Done speaking" : apiMode === "live" ? "A visitor is here" : "Say the reply"}
+          {inConversation
+            ? "End the conversation"
+            : mic.state === "recording"
+              ? "Done speaking"
+              : apiMode === "live"
+                ? "A visitor is here"
+                : "Say the reply"}
           <span className="mono small muted"> · space</span>
         </button>
       </div>
