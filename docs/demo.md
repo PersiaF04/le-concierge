@@ -297,9 +297,56 @@ This script demonstrates the core functionality of Le Concierge: smart visitor r
 ### Prerequisites
 
 - [ ] Node.js 22.0.0+
+- [ ] Python 3.12+ with `uv`
 - [ ] GitHub CLI (`gh`)
-- [ ] MISTRAL_API_KEY environment variable
+- [ ] MISTRAL_API_KEY environment variable (never committed)
 - [ ] Two devices or browser tabs (intercom + resident app)
+
+### Workflows worker (start this first)
+
+The visitor, parcel and digest flows run as Mistral Workflows. Nothing moves
+until the worker is up.
+
+```bash
+cd workflows
+uv sync
+export MISTRAL_API_KEY=...          # or put it in workflows/.env
+uv run python -m worker.entrypoints.worker
+```
+
+With the Mistral CLI installed, `mistral dev` from `workflows/` does the same
+thing and restarts the worker when a file changes.
+
+Environment variables the worker reads:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MISTRAL_API_KEY` | — | Model calls and the Studio connection |
+| `LE_CONCIERGE_API_URL` | `http://localhost:3000` | Node API the activities call back into |
+| `WORKFLOWS_REPLAY` | `0` | `1` = run every activity from the recorded fixtures, fully offline |
+| `WORKFLOWS_RECORD` | `0` | `1` = record real activity results into `fixtures/` |
+| `VISITOR_DECISION_TIMEOUT_SECONDS` | `60` | How long the visitor flow waits for the resident |
+
+Start an execution for the rehearsal:
+
+```bash
+cd workflows
+uv run python scripts/run_workflow.py visitor-arrival --input fixtures/visitor_input.json
+uv run python scripts/run_workflow.py parcel-arrival  --input fixtures/parcel_input.json
+uv run python scripts/run_workflow.py nightly-digest  --input fixtures/digest_input.json
+```
+
+### Where to see executions in Studio
+
+**Studio → Workflows → Executions.** Each run lists its activity history, the
+signal it is waiting on (`resident-decision`), and its output. Keep this tab open
+during the pitch: showing the run advancing from `transcribe_intercom_audio` to
+the waiting-on-signal state, then completing after the resident taps approve, is
+the proof that the flows are durable and not just a script.
+
+If the venue wifi drops, restart the worker with `WORKFLOWS_REPLAY=1`: the same
+flows run from `workflows/fixtures/`, nothing is called out, and the Studio tab
+keeps the runs already recorded.
 
 ### Pre-Recorded Fallback
 
@@ -324,6 +371,8 @@ If technical issues occur:
 - [ ] Intercom device ready (or simulator)
 - [ ] Resident app running
 - [ ] Server running
+- [ ] Workflows worker running (`cd workflows && uv run python -m worker.entrypoints.worker`)
+- [ ] Studio → Workflows → Executions open in a tab
 - [ ] MISTRAL_API_KEY set
 - [ ] Audio working
 - [ ] Camera working (or pre-recorded images)

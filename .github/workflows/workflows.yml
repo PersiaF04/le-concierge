@@ -1,0 +1,42 @@
+name: Workflows
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "workflows/**"
+      - ".github/workflows/workflows.yml"
+  pull_request:
+    paths:
+      - "workflows/**"
+      - ".github/workflows/workflows.yml"
+
+jobs:
+  test:
+    name: Workflows tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Sync the worker project
+        working-directory: workflows
+        run: uv sync --frozen
+
+      - name: Run tests in replay mode
+        working-directory: workflows
+        env:
+          WORKFLOWS_REPLAY: "1"
+        run: uv run pytest -q
+
+      - name: Import the worker module
+        working-directory: workflows
+        run: uv run python -c "import worker.entrypoints.worker as w; print('worker imports')"
