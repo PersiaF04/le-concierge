@@ -17,7 +17,7 @@ import OutcomeStamp from "../components/OutcomeStamp";
 import { useVisitorLook } from "../gaze";
 import { saveDoorShot } from "../data";
 import { useMicrophone } from "../mic";
-import { openDoorVoice } from "../voice";
+import { openDoorVoice, type Decision } from "../voice";
 
 /**
  * A visit the door has just rung for. Every field starts empty: the workflow
@@ -86,6 +86,16 @@ function nearlySame(a: string, b: string): boolean {
 const preview = import.meta.env.DEV ? new URLSearchParams(window.location.search) : null;
 const previewMood = (preview?.get("mood") ?? null) as FaceMood | null;
 const previewStamp = (preview?.get("stamp") ?? null) as Visit["status"] | null;
+
+/** If the agent has not started speaking this long after the resident answered, the door says it. */
+const CONFIRM_AFTER_MS = 3000;
+/** The door's own confirmation of the resident's answer. */
+const CONFIRMATION: Record<Decision, string> = {
+  approved: "Good news, the resident has accepted. Please come in.",
+  declined: "Sorry, the resident has declined the visit.",
+  expired: "Sorry, the resident didn't answer in time.",
+};
+const DECIDED = new Set<Visit["status"]>(["approved", "declined", "expired"]);
 
 /** How long a line stays up after it was said. */
 const CAPTION_HOLD_MS = 2500;
@@ -182,6 +192,30 @@ export default function DoorScreen() {
   const contextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const samples = useRef(new Uint8Array(1024));
+  /** The agent's own audio, for the mouth while the door plays nothing of its own. */
+  const agentAnalyserRef = useRef<AnalyserNode | null>(null);
+  /** Runs once when the door's current line is over (played, captioned or cut off). */
+  const speechDone = useRef<(() => void) | null>(null);
+
+  // Confirming the resident's answer out loud.
+  const visitRef = useRef(visit);
+  visitRef.current = visit;
+  /** The visit ask_resident rang for, and the wav the workflow attached to it. */
+  const askedVisit = useRef<string | null>(null);
+  const askedSpeech = useRef<Visit["speech"]>(null);
+  /** When the agent last said anything (a transcript, or its speaking state). */
+  const agentSpokeAt = useRef(0);
+  const agentStateRef = useRef<AgentState>("idle");
+  /** A confirmation is due or playing: the wind-down must not close the session yet. */
+  const confirming = useRef(false);
+  const [answerPending, setAnswerPending] = useState(false);
+  const setConfirming = useCallback((pending: boolean) => {
+    confirming.current = pending;
+    setAnswerPending(pending);
+  }, []);
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Fallback visits whose answer the door has already confirmed. */
+  const confirmedFor = useRef(new Set<string>());
 
   /** What the door says: the agent's line in a conversation, else the workflow's reply. */
   const said = notice || (inConversation ? agentLine : (visit?.speech?.text ?? visit?.reply ?? ""));
@@ -190,7 +224,7 @@ export default function DoorScreen() {
 
   /** How loud the door is right now, for the mouth. */
   const level = useCallback(() => {
-    const node = analyserRef.current;
+    const node = analyserRef.current ?? agentAnalyserRef.current;
     if (node) return loudness(node, samples.current);
     const t = performance.now() / 1000;
     return 0.25 + 0.55 * Math.abs(Math.sin(t * 8.5)) * Math.abs(Math.sin(t * 2.1 + 0.6));
@@ -215,6 +249,13 @@ export default function DoorScreen() {
     };
   }, [unlockAudio]);
 
+  /** The door's line is over: run whatever was waiting for it, once. */
+  const lineDone = useCallback(() => {
+    const done = speechDone.current;
+    speechDone.current = null;
+    done?.();
+  }, []);
+
   const stopSpeech = useCallback(() => {
     if (captionTimer.current) clearTimeout(captionTimer.current);
     captionTimer.current = null;
@@ -227,15 +268,26 @@ export default function DoorScreen() {
     analyserRef.current = null;
     setSpeaking(false);
     setCaptionOnly(false);
-  }, []);
+    lineDone();
+  }, [lineDone]);
 
   /** No audio to play: the line stays on screen for about as long as it takes to read. */
-  const showCaption = useCallback((text: string) => {
-    const words = text.trim().split(/\s+/).length;
-    setCaptionOnly(true);
-    if (captionTimer.current) clearTimeout(captionTimer.current);
-    captionTimer.current = setTimeout(() => setCaptionOnly(false), Math.min(9000, Math.max(2000, words * 380)));
-  }, []);
+  const showCaption = useCallback(
+    (text: string) => {
+      const words = text.trim().split(/\s+/).length;
+      setCaptionOnly(true);
+      if (captionTimer.current) clearTimeout(captionTimer.current);
+      captionTimer.current = setTimeout(
+        () => {
+          captionTimer.current = null;
+          setCaptionOnly(false);
+          lineDone();
+        },
+        Math.min(9000, Math.max(2000, words * 380)),
+      );
+    },
+    [lineDone],
+  );
 
   /** Show a line with no audio behind it (a flat refusal, the goodbye), or clear it. */
   const setNotice = useCallback(
@@ -275,6 +327,7 @@ export default function DoorScreen() {
     let open = true;
     const socket = openLive({ scope: "door", door: doorId }, (next) => {
       if (!open || next.doorId !== doorId) return;
+      if (next.id === askedVisit.current && next.speech) askedSpeech.current = next.speech;
       setVisit((focused) => (!focused || focused.id === next.id || !waiting(focused) ? { ...next, mode: "workflow" } : focused));
     });
     return () => {
@@ -284,48 +337,59 @@ export default function DoorScreen() {
   }, []);
 
   /**
-   * Say the workflow's reply (the fallback pipeline). The wav is decoded and
-   * played through the AudioContext the bell press unlocked, so autoplay rules
-   * do not apply and the voice is always Voxtral's. Without a wav, or if the
-   * browser still refuses, the line is shown silently.
+   * Say a line. The wav is decoded and played through the AudioContext the
+   * bell press unlocked, and its analyser, so autoplay rules do not apply, the
+   * mouth moves and the voice is always Voxtral's. Without a wav, or if the
+   * browser still refuses, the line is shown silently. `onDone` runs once the
+   * line is over, however it ends.
    */
-  const speak = useCallback(async () => {
-    stopSpeech();
-    if (!said) return;
-    const source = speechAudioUrl(visit?.speech);
-    const context = contextRef.current;
-    if (!source || !context) {
-      showCaption(said);
-      return;
-    }
-    try {
-      await context.resume();
-      const response = await fetch(source);
-      if (!response.ok) throw new Error(`${response.status}`);
-      const buffer = await context.decodeAudioData(await response.arrayBuffer());
-      const node = context.createAnalyser();
-      node.fftSize = samples.current.length;
-      const player = context.createBufferSource();
-      player.buffer = buffer;
-      player.connect(node);
-      node.connect(context.destination);
-      player.onended = () => {
-        if (sourceRef.current !== player) return;
-        sourceRef.current = null;
-        analyserRef.current = null;
-        setSpeaking(false);
-      };
-      sourceRef.current = player;
-      analyserRef.current = node;
-      const count = said.trim().split(/s+/).length;
-      setPace(Math.min(600, Math.max(220, (buffer.duration * 1000 * 0.92) / count)));
-      setSpeaking(true);
-      player.start();
-    } catch (error) {
-      console.warn("[door] could not play the reply; showing it silently", error);
-      showCaption(said);
-    }
-  }, [said, showCaption, stopSpeech, visit?.speech]);
+  const playLine = useCallback(
+    async (text: string, source: string | null, onDone?: () => void) => {
+      stopSpeech();
+      speechDone.current = onDone ?? null;
+      if (!text) {
+        lineDone();
+        return;
+      }
+      const context = contextRef.current;
+      if (!source || !context) {
+        showCaption(text);
+        return;
+      }
+      try {
+        await context.resume();
+        const response = await fetch(source);
+        if (!response.ok) throw new Error(`${response.status}`);
+        const buffer = await context.decodeAudioData(await response.arrayBuffer());
+        const node = context.createAnalyser();
+        node.fftSize = samples.current.length;
+        const player = context.createBufferSource();
+        player.buffer = buffer;
+        player.connect(node);
+        node.connect(context.destination);
+        player.onended = () => {
+          if (sourceRef.current !== player) return;
+          sourceRef.current = null;
+          analyserRef.current = null;
+          setSpeaking(false);
+          lineDone();
+        };
+        sourceRef.current = player;
+        analyserRef.current = node;
+        const count = text.trim().split(/\s+/).length;
+        setPace(Math.min(600, Math.max(220, (buffer.duration * 1000 * 0.92) / count)));
+        setSpeaking(true);
+        player.start();
+      } catch (error) {
+        console.warn("[door] could not play the line; showing it silently", error);
+        showCaption(text);
+      }
+    },
+    [lineDone, showCaption, stopSpeech],
+  );
+
+  /** Say the workflow's reply (the fallback pipeline). */
+  const speak = useCallback(() => playLine(said, speechAudioUrl(visit?.speech)), [playLine, said, visit?.speech]);
 
   /**
    * When the workflow attaches audio to a visit this page rang for, the door
@@ -340,6 +404,25 @@ export default function DoorScreen() {
     void speak();
   }, [inConversation, speak, visit, visit?.speech?.audioUrl]);
 
+  /**
+   * The fallback always says the resident's answer: if no wav has played for
+   * the visit 3 s after the answer landed, the door captions it.
+   */
+  const fallbackAnswer =
+    !inConversation && visit && ringedFor.current.has(visit.id) && DECIDED.has(visit.status) ? visit.id : null;
+  useEffect(() => {
+    const decided = visitRef.current;
+    if (!fallbackAnswer || decided?.id !== fallbackAnswer || confirmedFor.current.has(fallbackAnswer)) return;
+    confirmedFor.current.add(fallbackAnswer);
+    const sentence = CONFIRMATION[decided.status as Decision];
+    setTimeout(() => {
+      const now = visitRef.current;
+      if (now?.id === fallbackAnswer && now.speech?.audioUrl && spokenFor.current === now.speech.audioUrl) return;
+      console.info(`[door] no wav for "${decided.status}" yet; captioning the answer`);
+      setNotice(sentence);
+    }, CONFIRM_AFTER_MS);
+  }, [fallbackAnswer, setNotice]);
+
   // ── the live conversation ─────────────────────────────────────────────────
 
   /**
@@ -349,10 +432,16 @@ export default function DoorScreen() {
   const resetSilence = useCallback(() => {
     if (silenceTimer.current) clearTimeout(silenceTimer.current);
     const ms = windingDown.current ? WIND_DOWN_MS : SILENCE_MS;
-    silenceTimer.current = setTimeout(() => {
+    const close = () => {
+      // Winding down, the answer's confirmation (the agent's or the door's) is heard to the end first.
+      if (windingDown.current && (confirming.current || agentStateRef.current === "speaking")) {
+        silenceTimer.current = setTimeout(close, 500);
+        return;
+      }
       console.info(`[door] ${ms / 1000} s with nothing said, ending the conversation`);
       void sessionRef.current?.close();
-    }, ms);
+    };
+    silenceTimer.current = setTimeout(close, ms);
   }, []);
 
   /** The conversation is over: everything is reset and the microphone is let go. */
@@ -373,7 +462,8 @@ export default function DoorScreen() {
       element.pause();
       element.srcObject = null;
     }
-    analyserRef.current = null;
+    agentAnalyserRef.current = null;
+    agentStateRef.current = "idle";
     setInConversation(false);
     setAgentState("idle");
     setAwaitingReply(false);
@@ -434,14 +524,49 @@ export default function DoorScreen() {
     resetSilence();
   }, [resetSilence]);
 
+  /**
+   * ask_resident has the answer. If the agent has not started speaking 3 s
+   * later, the door says it: the workflow's wav for the visit when there is
+   * one, else the sentence as a caption. It runs even if the session has ended
+   * in the meantime, so the visitor always hears the answer.
+   */
+  const confirmDecision = useCallback(
+    (decision: Decision) => {
+      const decidedAt = performance.now();
+      setConfirming(true);
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+      confirmTimer.current = setTimeout(() => {
+        confirmTimer.current = null;
+        if (agentSpokeAt.current > decidedAt) {
+          setConfirming(false);
+          return;
+        }
+        console.info(`[door] the agent did not confirm "${decision}"; the door says it`);
+        const sentence = CONFIRMATION[decision];
+        setNoticeText(sentence);
+        void playLine(sentence, speechAudioUrl(askedSpeech.current), () => {
+          setConfirming(false);
+          setNoticeText((current) => (current === sentence ? "" : current));
+          if (sessionRef.current) resetSilence();
+        });
+      }, CONFIRM_AFTER_MS);
+    },
+    [playLine, resetSilence, setConfirming],
+  );
+
   /** Open a Voice Agent session and wire its events to the face. Throws if it cannot start. */
   const startConversation = useCallback(async () => {
     const session = await openDoorVoice({
       snapshot: () => camera.capture(),
       onVisit: (id) => {
+        askedVisit.current = id;
+        askedSpeech.current = null;
         setVisit(freshVisit(id, null));
       },
-      onDecision: () => windDown(),
+      onDecision: (decision) => {
+        confirmDecision(decision);
+        windDown();
+      },
     });
     sessionRef.current = session;
 
@@ -460,9 +585,9 @@ export default function DoorScreen() {
           const node = context.createAnalyser();
           node.fftSize = samples.current.length;
           context.createMediaStreamSource(stream).connect(node);
-          analyserRef.current = node;
+          agentAnalyserRef.current = node;
         } catch {
-          analyserRef.current = null;
+          agentAnalyserRef.current = null;
         }
       }
       if (!element) return;
@@ -482,6 +607,8 @@ export default function DoorScreen() {
     let previous: string = "idle";
     session.on("agent_state_changed", ({ state }) => {
       setAgentState(state as AgentState);
+      agentStateRef.current = state as AgentState;
+      if (state === "speaking") agentSpokeAt.current = performance.now();
       if (state === "speaking" || state === "thinking") clearStuck();
       if (state === "speaking") {
         setAwaitingReply(false);
@@ -500,6 +627,7 @@ export default function DoorScreen() {
         resetSilence();
         return;
       }
+      agentSpokeAt.current = performance.now();
       if (final) {
         if (nearlySame(content, lastAgentLine.current)) {
           sayGoodbye("the agent repeated itself");
@@ -554,7 +682,7 @@ export default function DoorScreen() {
     if (!held.current) setAwaitingReply(true);
     resetSilence();
     void session.wait().then(endConversation, endConversation);
-  }, [armStuck, camera, clearStuck, endConversation, resetSilence, sayGoodbye, setMicLive, windDown]);
+  }, [armStuck, camera, clearStuck, confirmDecision, endConversation, resetSilence, sayGoodbye, setMicLive, windDown]);
 
   /**
    * The fallback doorbell: photograph the doorstep, record while the visitor
@@ -585,6 +713,10 @@ export default function DoorScreen() {
     setRinging(true);
     setNotice("");
     cancelled.current = false;
+    // A new visitor: the last one's pending confirmation is dropped.
+    if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    confirmTimer.current = null;
+    setConfirming(false);
     stopSpeech();
     const photo = camera.capture();
     if (photo) {
@@ -602,7 +734,7 @@ export default function DoorScreen() {
     } finally {
       setRinging(false);
     }
-  }, [camera, ringRecorded, startConversation, stopSpeech]);
+  }, [camera, ringRecorded, setConfirming, startConversation, stopSpeech]);
 
   /**
    * Press and hold (Space, the face, or the desk control): the first press
@@ -681,6 +813,7 @@ export default function DoorScreen() {
 
   useEffect(
     () => () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
       stopSpeech();
       void sessionRef.current?.close();
     },
@@ -696,15 +829,17 @@ export default function DoorScreen() {
 
   const agentSpeaking = inConversation && agentState === "speaking";
   const mood: FaceMood = inConversation
-    ? toolBusy
-      ? "thinking"
-      : agentSpeaking
-        ? "speaking"
-        : holding
-          ? "listening"
-          : awaitingReply || agentState === "thinking"
-            ? "thinking"
-            : "idle"
+    ? speaking
+      ? "speaking"
+      : toolBusy
+        ? "thinking"
+        : agentSpeaking
+          ? "speaking"
+          : holding
+            ? "listening"
+            : awaitingReply || agentState === "thinking"
+              ? "thinking"
+              : "idle"
     : speaking
       ? "speaking"
       : mic.state === "recording" || (ringing && holding)
@@ -716,7 +851,7 @@ export default function DoorScreen() {
   /** Nobody is talking to the door: the face rests, dimmed, with the one hint. */
   const resting = (previewMood ?? mood) === "idle" && !inConversation && !captionOnly;
   const faceMood = previewMood ?? mood;
-  const showLine = captionOnly || previewMood === "speaking" || (inConversation ? agentSpeaking || lineHeld : speaking);
+  const showLine = captionOnly || speaking || previewMood === "speaking" || (inConversation && (agentSpeaking || lineHeld));
   const line = showLine && said ? said : resting ? HINT : "";
 
   return (
@@ -735,12 +870,17 @@ export default function DoorScreen() {
           text={line}
           show={Boolean(line)}
           hint={line === HINT}
-          msPerWord={inConversation || captionOnly ? WORD_MS : pace}
+          msPerWord={(inConversation && !speaking) || captionOnly ? WORD_MS : pace}
         />
         <audio ref={agentAudioRef} hidden />
       </main>
 
-      <OutcomeStamp visitId={previewStatus ? "preview" : visit?.id} status={previewStatus ?? visit?.status} audio={audio} />
+      <OutcomeStamp
+        visitId={previewStatus ? "preview" : visit?.id}
+        status={previewStatus ?? visit?.status}
+        audio={audio}
+        hold={answerPending}
+      />
 
       <div className="door-desk">
         {inConversation ? (
