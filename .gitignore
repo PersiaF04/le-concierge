@@ -93,3 +93,9 @@ $RECYCLE.BIN/
 
 # Local config
 local.env
+
+# Design work in progress: rendered screenshots stay local
+.web-design/shots/
+.web-design/app-shots/
+.web-design/directions/*.png
+.web-design/directions/*.jpg

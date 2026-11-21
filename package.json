@@ -13,7 +13,11 @@
     "test:watch": "node --test --watch",
     "smoke": "node --test test/smoke.test.js",
     "lint": "echo Linting... && node --check server/**/*.js apps/**/*.js",
-    "prep": "npm install"
+    "prep": "npm install",
+    "dev:resident": "npm -w apps/resident run dev",
+    "dev:concierge": "npm -w apps/concierge run dev",
+    "build:apps": "npm -w apps/resident run build && npm -w apps/concierge run build",
+    "test:apps": "npm -w apps/resident run test && npm -w apps/concierge run test"
   },
   "keywords": [
     "intercom",
@@ -60,5 +64,9 @@
   ],
   "export": {
     ".": "./server/index.js"
-  }
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
 }
