@@ -18,14 +18,14 @@ system_context:
     buildings without requiring sign-in or payments.
   
   actors:
-    - Visitor
+    - name: Visitor
       description: Person arriving at the building
       interactions:
         - Speaks to intercom
         - Has photo taken
         - Waits for access decision
     
-    - Resident
+    - name: Resident
       description: Person living in the building
       interactions:
         - Sets up profile (optional details)
@@ -33,7 +33,7 @@ system_context:
         - Approves/denies access
         - Confirms "that was me"
     
-    - Concierge Staff
+    - name: Concierge Staff
       description: Building staff managing the system
       interactions:
         - Monitors all activity
@@ -124,7 +124,7 @@ components:
       - Profile management (name, flat required; email, phone, WhatsApp optional)
       - Visitor notifications (photo + live audio)
       - Approve/deny access
-      - "That was me" confirmation
+      - That-was-me confirmation
       - Parcel alerts
       - Presence status
     
@@ -278,7 +278,7 @@ data_flows:
         description: Open door or play denial message
 
   - id: that_was_me
-    name: "That Was Me" Flow
+    name: That Was Me Flow
     description: What happens when a resident confirms their own face
     steps:
       1:
@@ -515,6 +515,60 @@ monitoring:
     - Slow response time (> 1 second)
     - Database connection failures
     - API key missing
+
+# ============================================================================
+# WORKFLOWS ORCHESTRATION (Mistral Workflows)
+# ============================================================================
+workflows_orchestration:
+  runtime: Mistral Workflows (Temporal-backed, public preview)
+  worker:
+    path: workflows/
+    language: Python 3.12
+    package: mistralai-workflows[mistralai]
+    entrypoint: python -m worker.entrypoints.worker
+    dev_command: mistral dev
+    api_base_url_env: LE_CONCIERGE_API_URL
+    replay_env: WORKFLOWS_REPLAY
+
+  workflows:
+    - name: visitor-arrival
+      trigger: MediaPipe event, POST /v1/workflows/visitor-arrival/execute
+      activities:
+        - describe_snapshot      # Mistral vision: scene only, never identity
+        - match_face             # face-api.js descriptor, opted-in residents only
+        - transcribe_intercom_audio  # Voxtral
+        - decide_visit           # Le Chonk (Mistral Large) via the Agents SDK
+        - post_visit             # API stores the visit, pushes it over WS /live
+        - speak_reply            # Voxtral TTS at the door
+        - log_event
+      signal:
+        name: resident-decision
+        sent_by: POST /visits/{id}/decision
+        timeout: VISITOR_DECISION_TIMEOUT_SECONDS, declines on expiry
+      stores: execution_id on the visit
+
+    - name: parcel-arrival
+      trigger: parcel photographed at the desk
+      activities:
+        - read_label             # Mistral vision: label text and courier
+        - match_flat
+        - write_notice           # Le Chonk
+        - notify                 # resident channel: email or SMS plus in-app
+        - log_event
+
+    - name: nightly-digest
+      trigger: schedule, 0 19 * * * Europe/London
+      schedule_api: client.workflows.schedules.schedule_workflow
+      activities:
+        - fetch_day_events
+        - write_digest           # Le Chonk
+        - send_digest
+        - log_event
+
+  fallback:
+    mode: in-process in the Node server
+    when: WORKFLOWS_REPLAY=1 or no worker reachable
+    source: workflows/fixtures/*.json
 
 # ============================================================================
 # VERSION HISTORY

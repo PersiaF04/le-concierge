@@ -1,0 +1,7 @@
+{
+  "people_visible": 1,
+  "scene": "A courier in a navy jacket holding a medium cardboard box at the door.",
+  "parcels": [
+    { "label_text": "FLAT 12 - HANDLE WITH CARE", "courier": "DPD" }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "day": "2026-11-20",
+  "flat": "12",
+  "events": [
+    { "type": "visit.approved", "at": "2026-11-20T10:14:00Z", "who": "DPD courier" },
+    { "type": "parcel.left", "at": "2026-11-20T10:16:00Z", "note": "left at the desk" },
+    { "type": "visit.declined", "at": "2026-11-20T18:40:00Z", "who": "unknown visitor" }
+  ]
+}
