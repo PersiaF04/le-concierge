@@ -11,7 +11,10 @@ import {
   useWebcam,
   type Visit,
 } from "@le-concierge/ui";
+import Captions, { WORD_MS } from "../components/Captions";
 import Face, { gazeFrom, type FaceMood } from "../components/Face";
+import OutcomeStamp from "../components/OutcomeStamp";
+import { useVisitorLook } from "../gaze";
 import { saveDoorShot } from "../data";
 import { useMicrophone } from "../mic";
 import { openDoorVoice } from "../voice";
@@ -76,6 +79,14 @@ function nearlySame(a: string, b: string): boolean {
   return shared / new Set([...x, ...y]).size >= 0.85;
 }
 
+/**
+ * Development only: `?mood=speaking` pins the face, and `?stamp=approved`
+ * (or `declined`) lands a stamp, for screenshots. Stripped from the build.
+ */
+const preview = import.meta.env.DEV ? new URLSearchParams(window.location.search) : null;
+const previewMood = (preview?.get("mood") ?? null) as FaceMood | null;
+const previewStamp = (preview?.get("stamp") ?? null) as Visit["status"] | null;
+
 /** How long a line stays up after it was said. */
 const CAPTION_HOLD_MS = 2500;
 
@@ -119,6 +130,19 @@ export default function DoorScreen() {
   /** The photograph taken when the bell rang. */
   const [shot, setShot] = useState<string | null>(null);
   const [gaze, setGaze] = useState({ x: 0, y: 0 });
+  /** How long each word of the reply takes to say, from the audio when there is some. */
+  const [pace, setPace] = useState(WORD_MS);
+  /** A detached element on the background camera, for the face to find the visitor in. */
+  const [cameraFeed, setCameraFeed] = useState<HTMLVideoElement | null>(null);
+  const visitor = useVisitorLook(cameraFeed);
+  const look = useCallback(() => visitor.current, [visitor]);
+  /** The previewed stamp lands on a visit that was waiting a moment before, as a real one does. */
+  const [previewStatus, setPreviewStatus] = useState<Visit["status"] | null>(previewStamp && "pending_decision");
+  useEffect(() => {
+    if (!previewStamp) return;
+    const timer = setTimeout(() => setPreviewStatus(previewStamp), 400);
+    return () => clearTimeout(timer);
+  }, []);
 
   // The live conversation.
   const [inConversation, setInConversation] = useState(false);
@@ -161,6 +185,8 @@ export default function DoorScreen() {
 
   /** What the door says: the agent's line in a conversation, else the workflow's reply. */
   const said = notice || (inConversation ? agentLine : (visit?.speech?.text ?? visit?.reply ?? ""));
+
+  const audio = useCallback(() => contextRef.current, []);
 
   /** How loud the door is right now, for the mouth. */
   const level = useCallback(() => {
@@ -221,10 +247,24 @@ export default function DoorScreen() {
   );
 
   /** The camera (video only, no audio track) runs in the background, ready to photograph the doorstep. */
-  const { start: startCamera } = camera;
+  const { start: startCamera, attach: attachCamera, state: cameraState } = camera;
   useEffect(() => {
     void startCamera();
   }, [startCamera]);
+
+  /** Once the camera is live, the face watches the same stream (nothing is added to the page). */
+  useEffect(() => {
+    if (cameraState !== "live") return;
+    const feed = document.createElement("video");
+    feed.muted = true;
+    feed.playsInline = true;
+    attachCamera(feed);
+    setCameraFeed(feed);
+    return () => {
+      feed.srcObject = null;
+      setCameraFeed(null);
+    };
+  }, [attachCamera, cameraState]);
 
   /**
    * In live mode the door follows its own feed (`/live?scope=door&door=<id>`):
@@ -277,6 +317,8 @@ export default function DoorScreen() {
       };
       sourceRef.current = player;
       analyserRef.current = node;
+      const count = said.trim().split(/s+/).length;
+      setPace(Math.min(600, Math.max(220, (buffer.duration * 1000 * 0.92) / count)));
       setSpeaking(true);
       player.start();
     } catch (error) {
@@ -672,8 +714,9 @@ export default function DoorScreen() {
           : "idle";
 
   /** Nobody is talking to the door: the face rests, dimmed, with the one hint. */
-  const resting = mood === "idle" && !inConversation && !captionOnly;
-  const showLine = captionOnly || (inConversation ? agentSpeaking || lineHeld : speaking);
+  const resting = (previewMood ?? mood) === "idle" && !inConversation && !captionOnly;
+  const faceMood = previewMood ?? mood;
+  const showLine = captionOnly || previewMood === "speaking" || (inConversation ? agentSpeaking || lineHeld : speaking);
   const line = showLine && said ? said : resting ? HINT : "";
 
   return (
@@ -686,19 +729,18 @@ export default function DoorScreen() {
             hold();
           }}
         >
-          <Face mood={mood} level={level} gaze={gaze} resting={resting} />
+          <Face mood={faceMood} level={level} gaze={gaze} look={look} resting={resting} />
         </div>
-        <p
-          className="subtitle"
-          data-show={Boolean(line)}
-          data-hint={line === HINT}
-          data-testid="door-line"
-          aria-live="polite"
-        >
-          {line}
-        </p>
+        <Captions
+          text={line}
+          show={Boolean(line)}
+          hint={line === HINT}
+          msPerWord={inConversation || captionOnly ? WORD_MS : pace}
+        />
         <audio ref={agentAudioRef} hidden />
       </main>
+
+      <OutcomeStamp visitId={previewStatus ? "preview" : visit?.id} status={previewStatus ?? visit?.status} audio={audio} />
 
       <div className="door-desk">
         {inConversation ? (
