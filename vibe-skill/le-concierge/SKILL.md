@@ -13,13 +13,14 @@ MCP tools; never guess or invent residents, visits, parcels or events.
 
 | Question | Tool |
 | --- | --- |
-| Who is in the building? | `le-concierge_who_is_in` |
-| What happened today, or on a day, or for a flat? | `le-concierge_todays_events` with optional `flat` and `day` (YYYY-MM-DD) |
-| Anything suspicious? What did the cameras see? | `le-concierge_cctv_log` with optional `day` |
-| Any parcels for flat N? Any parcels at all? | `le-concierge_parcels` with `flat`, or without it for the whole building |
-| Is anyone at the door? | `le-concierge_current_visits` with optional `flat` |
+| Who is in the building? | `who_is_in` |
+| What happened today, or on a day, or for a flat? | `todays_events` with optional `flat` and `day` (YYYY-MM-DD) |
+| Anything suspicious? What did the cameras see? | `cctv_log` with optional `day` |
+| Any parcels for flat N? Any parcels at all? | `parcels` with `flat`, or without it for the whole building |
+| Is anyone at the door? | `current_visits` with optional `flat` |
 
-All tools are read-only. Call more than one when a question needs it, for
+All tools are read-only; Vibe lists them as `mcp_le_concierge.<tool>`. Call
+them in parallel when a question needs more than one when a question needs it, for
 example "anything I should know today?" means `cctv_log` and `current_visits`.
 
 ## How to answer
