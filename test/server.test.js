@@ -365,12 +365,45 @@ describe('offline API', () => {
     nine.socket.close();
   });
 
-  test('WS /live without a flat is refused', async () => {
-    const code = await new Promise((resolve) => {
-      const socket = new WebSocket(`${api.ws}/live`);
-      socket.on('close', (c) => resolve(c));
-    });
-    assert.equal(code, 1008);
+  test('WS /live?scope=door hears every flat, and visits with no flat yet', async () => {
+    const door = await listen(`${api.ws}/live?scope=door`);
+    const resident = await listen(`${api.ws}/live?flat=70`);
+    await settle();
+    assert.equal(door.frames.length, 1, 'the door gets the newest visit on connect');
+    door.frames.length = 0;
+    resident.frames.length = 0;
+
+    await api.post('/visits', { visit_id: 'visit_door_70', flat: '70' });
+    await api.post('/visits', { visit_id: 'visit_door_71', flat: '71' });
+    await api.post('/arrivals', { flat: null });
+    await settle();
+
+    const seen = door.frames.filter((f) => f.type === 'visit').map((f) => f.visit.flat);
+    assert.ok(seen.includes('70') && seen.includes('71'));
+    assert.ok(seen.includes(null), 'a visit with no flat still reaches the door');
+    assert.deepEqual(
+      resident.frames.map((f) => f.visit.id),
+      ['visit_door_70'],
+      'a resident still hears only their own flat',
+    );
+
+    await api.post('/snapshots', { flat: '71', dataUrl: 'data:image/png;base64,AA' });
+    await settle();
+    assert.equal(door.frames.at(-1).type, 'snapshot');
+    assert.equal(resident.frames.length, 1);
+
+    door.socket.close();
+    resident.socket.close();
+  });
+
+  test('WS /live without a flat or scope=door is refused with 1008', async () => {
+    for (const path of ['/live', '/live?scope=lobby']) {
+      const code = await new Promise((resolve) => {
+        const socket = new WebSocket(`${api.ws}${path}`);
+        socket.on('close', (c) => resolve(c));
+      });
+      assert.equal(code, 1008, path);
+    }
   });
 });
 

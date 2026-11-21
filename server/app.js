@@ -188,11 +188,18 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
   const clients = new Set();
 
   /** Push a visit to the sockets watching its flat, and nobody else. */
+  /**
+   * Who hears about a flat: its own residents' sockets, and every door socket.
+   * A door sees the whole building, including visits with no flat yet.
+   */
+  const hears = (socket, flat) =>
+    socket.scope === 'door' || (flat != null && socket.flat === String(flat));
+
+  /** Push a visit to the sockets watching its flat, and to the door. */
   function broadcast(visit) {
-    if (!visit.flat) return;
     const frame = JSON.stringify({ type: 'visit', visit: publicVisit(visit) });
     for (const socket of clients) {
-      if (socket.flat !== String(visit.flat)) continue;
+      if (!hears(socket, visit.flat)) continue;
       if (socket.readyState === Socket.OPEN) socket.send(frame);
     }
   }
@@ -201,7 +208,7 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
   function broadcastSnapshot(snapshot) {
     const frame = JSON.stringify({ type: 'snapshot', snapshot });
     for (const socket of clients) {
-      if (socket.flat !== String(snapshot.flat)) continue;
+      if (!hears(socket, snapshot.flat)) continue;
       if (socket.readyState === Socket.OPEN) socket.send(frame);
     }
   }
@@ -835,17 +842,20 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
   wss.on('connection', (socket, req) => {
     const url = new URL(req.url || '/live', 'http://localhost');
     const flat = url.searchParams.get('flat');
-    if (!flat) {
-      socket.close(1008, 'flat is required');
+    // ?scope=door is the building-wide feed; ?flat= is one resident's flat.
+    const door = url.searchParams.get('scope') === 'door';
+    if (!flat && !door) {
+      socket.close(1008, 'flat or scope=door is required');
       return;
     }
-    socket.flat = flat;
+    socket.scope = door ? 'door' : 'flat';
+    socket.flat = door ? null : flat;
     socket.isAlive = true;
     clients.add(socket);
 
-    const current = db
-      .prepare('SELECT doc FROM visits WHERE flat = ? ORDER BY at DESC LIMIT 1')
-      .get(flat);
+    const current = door
+      ? db.prepare('SELECT doc FROM visits ORDER BY at DESC LIMIT 1').get()
+      : db.prepare('SELECT doc FROM visits WHERE flat = ? ORDER BY at DESC LIMIT 1').get(flat);
     if (current) socket.send(JSON.stringify({ type: 'visit', visit: publicVisit(parse(current)) }));
 
     socket.on('pong', () => {
