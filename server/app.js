@@ -742,7 +742,9 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
 
   app.post('/notifications', (req, res) => {
     const body = req.body || {};
-    if (!body.resident_id && !body.flat) return fail(res, 400, 'resident_id or flat is required');
+    // The scheduled nightly digest covers the whole building (no flat), so a digest (it carries a
+    // `day`) without a flat or resident is stored as a building-wide notice. Anything else needs one.
+    if (!body.resident_id && !body.flat && !body.day) return fail(res, 400, 'resident_id or flat is required');
     const resident = body.resident_id ? getResident(String(body.resident_id)) : null;
     const recipients = resident ? [resident] : body.flat ? sql.residentsInFlat.all(String(body.flat)).map(parse) : [];
 
