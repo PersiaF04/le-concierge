@@ -16,7 +16,7 @@ MCP tools; never guess or invent residents, visits, parcels or events.
 | Who is in the building? | `le-concierge_who_is_in` |
 | What happened today, or on a day, or for a flat? | `le-concierge_todays_events` with optional `flat` and `day` (YYYY-MM-DD) |
 | Anything suspicious? What did the cameras see? | `le-concierge_cctv_log` with optional `day` |
-| Any parcels for flat N? | `le-concierge_parcels` with `flat` |
+| Any parcels for flat N? Any parcels at all? | `le-concierge_parcels` with `flat`, or without it for the whole building |
 | Is anyone at the door? | `le-concierge_current_visits` with optional `flat` |
 
 All tools are read-only. Call more than one when a question needs it, for

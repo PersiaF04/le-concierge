@@ -55,11 +55,11 @@ test('parcels counts what is waiting at the desk', async () => {
   assert.match(result.content[0].text, /^Flat 7: 1 parcel\(s\) at the desk, 1 collected\./);
 });
 
-test('parcels without a flat is an error, not a fetch', async () => {
-  const { get, calls } = mockFetch({});
+test('parcels without a flat lists the whole building', async () => {
+  const { get, calls } = mockFetch({ '/parcels': [{ id: 'p3', flat: '12', courier: 'Evri', at: '2026-11-21T12:00:00Z', status: 'at_desk' }] });
   const result = await callTool(get, 'parcels', {});
-  assert.equal(result.isError, true);
-  assert.equal(calls.length, 0);
+  assert.equal(calls[0].search, '');
+  assert.match(result.content[0].text, /^Building: 1 parcel\(s\) at the desk, 0 collected\.\n12:00 flat 12 Evri - at_desk/);
 });
 
 test('current_visits asks for the waiting queue', async () => {

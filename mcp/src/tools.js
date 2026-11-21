@@ -23,8 +23,8 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'parcels',
-    description: 'Parcels for a flat, newest first, with courier and whether collected.',
-    inputSchema: { type: 'object', properties: { flat: flatProp }, required: ['flat'] },
+    description: 'Parcels for a flat (or the whole building when flat is omitted), newest first, with courier and whether collected.',
+    inputSchema: { type: 'object', properties: { flat: flatProp } },
   },
   {
     name: 'current_visits',
@@ -98,11 +98,10 @@ const handlers = {
   },
 
   async parcels(get, { flat } = {}) {
-    if (!flat) throw new Error('flat is required');
     const data = await get('/parcels', { flat });
     const waiting = data.filter((p) => p.status !== 'collected');
-    const head = `Flat ${flat}: ${waiting.length} parcel(s) at the desk, ${data.length - waiting.length} collected.`;
-    const lines = data.map((p) => `${time(p.at)} ${p.courier ?? 'unknown courier'} - ${p.status}${p.label ? ` (${p.label})` : ''}`);
+    const head = `${flat ? `Flat ${flat}` : 'Building'}: ${waiting.length} parcel(s) at the desk, ${data.length - waiting.length} collected.`;
+    const lines = data.map((p) => `${time(p.at)}${flat ? '' : ` flat ${p.flat ?? '?'}`} ${p.courier ?? 'unknown courier'} - ${p.status}${p.label ? ` (${p.label})` : ''}`);
     return { text: [head, ...lines].join('\n'), data };
   },
 
