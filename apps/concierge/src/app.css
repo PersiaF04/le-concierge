@@ -72,8 +72,13 @@
 
 /* ── the door ───────────────────────────────────────────── */
 
+[data-theme="dark"] .door { --think: oklch(0.82 0.12 80); }
+
 /* The door is the face, as large as the screen allows. */
 .door {
+  /* Amber for thinking: the door's own, warm against the ink, never the alert red. */
+  --think: oklch(0.72 0.13 75);
+  --caption-size: clamp(1.5rem, 4.4vmin, 3.25rem);
   position: relative;
   min-height: 100dvh;
   display: grid;
@@ -122,19 +127,58 @@
 }
 
 .face-brows { transition: transform var(--move); }
-.face-eyes { transition: transform 260ms cubic-bezier(0.2, 0, 0, 1); }
 
+/* The eyes are moved every frame by the component; a blink is a quick squash. */
 .face-eye {
   fill: var(--ink);
   transform-box: fill-box;
   transform-origin: center;
-  transition: r var(--move);
-  animation: blink 5.4s infinite;
+  transition: r var(--move), transform 70ms ease-in;
+}
+.face-eyes[data-blink] .face-eye { transform: scaleY(0.08); }
+
+/* Breathing: a slow 1.5 % swell, about every four seconds. */
+.face-body {
+  transform-box: view-box;
+  transform-origin: 120px 120px;
+  animation: breathe 4.2s ease-in-out infinite;
 }
 
-@keyframes blink {
-  0%, 91%, 100% { transform: scaleY(1); }
-  94% { transform: scaleY(0.1); }
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.015); }
+}
+
+/* The state glow: a soft halo behind the head, in the ledger's own colours.
+   Speaking sets its opacity from the voice, frame by frame. */
+.face-halo {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 12;
+  opacity: 0.07;
+  transition: stroke 400ms ease, opacity 400ms ease;
+}
+.face[data-mood="listening"] .face-halo {
+  stroke: var(--stamp);
+  animation: halo-pulse 1.6s ease-in-out infinite;
+}
+.face[data-mood="thinking"] .face-halo {
+  stroke: var(--think);
+  /* An arc of light going round, the way a thought turns over. */
+  stroke-dasharray: 240 363;
+  animation: halo-shimmer 2.2s linear infinite;
+}
+.face[data-mood="speaking"] .face-halo { stroke: var(--stamp); opacity: 0.22; transition: stroke 400ms ease; }
+
+@keyframes halo-pulse {
+  0%, 100% { opacity: 0.18; stroke-width: 10; }
+  50% { opacity: 0.55; stroke-width: 16; }
+}
+
+@keyframes halo-shimmer {
+  0% { opacity: 0.4; stroke-dashoffset: 0; }
+  50% { opacity: 0.7; }
+  100% { opacity: 0.4; stroke-dashoffset: -603; }
 }
 
 .face-cheek { fill: var(--stamp); opacity: 0.14; }
@@ -170,10 +214,12 @@
 /* Subtitles: the reply, large, only while it is said; it fades after. The
    line keeps its height so the face never jumps. */
 .subtitle {
-  min-height: calc(2 * 1.15em);
+  /* A fixed two-line box at the spoken size, whatever is in it: a longer line
+     overflows downwards and the hint is smaller, but the face never moves. */
+  height: calc(2 * 1.15 * var(--caption-size));
   max-width: 32ch;
   margin: 0;
-  font-size: clamp(1.5rem, 4.4vmin, 3.25rem);
+  font-size: var(--caption-size);
   line-height: 1.15;
   font-weight: 500;
   letter-spacing: -0.02em;
@@ -183,6 +229,13 @@
   transition: opacity 900ms ease;
 }
 .subtitle[data-show="true"] { opacity: 1; transition-duration: 200ms; }
+
+/* Word by word: every word holds its place and only fades in as it is said. */
+.subtitle .word {
+  opacity: 0;
+  transition: opacity 260ms ease;
+}
+.subtitle .word[data-on="true"] { opacity: 1; }
 
 /* The one hint while the door rests: small and quiet, in the subtitle's place. */
 .subtitle[data-hint="true"] {
@@ -204,7 +257,93 @@
 .door-desk:hover,
 .door-desk:focus-within { opacity: 1; }
 
+/* ── the outcome stamp ── */
+
+/* Over the page, taking no space: the door underneath never moves. */
+.outcome {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: clamp(3rem, 10vmin, 6rem);
+  pointer-events: none;
+  z-index: 10;
+  animation: outcome-out 500ms ease 2.5s forwards;
+}
+
+.outcome-defs { position: absolute; }
+
+.outcome-stamp {
+  font-family: var(--font-record);
+  font-weight: 500;
+  font-size: clamp(3rem, 15vmin, 10rem);
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--approve);
+  border: 0.07em solid currentColor;
+  outline: 0.025em solid currentColor;
+  outline-offset: 0.07em;
+  padding: 0.12em 0.3em 0.08em;
+  background: color-mix(in oklch, var(--paper) 94%, transparent);
+  filter: url(#lc-ink);
+  transform: rotate(-6deg);
+  animation: stamp-slam 260ms cubic-bezier(0.2, 0.9, 0.2, 1.2) both;
+}
+
+.outcome[data-outcome="refused"] .outcome-stamp {
+  color: var(--alert);
+  font-size: clamp(2.25rem, 9vmin, 6rem);
+  opacity: 0.85;
+  animation: stamp-settle 420ms ease-out both;
+}
+
+@keyframes stamp-slam {
+  0% { opacity: 0; transform: rotate(-11deg) scale(1.4); }
+  60% { opacity: 1; }
+  100% { opacity: 1; transform: rotate(-6deg) scale(1); }
+}
+
+@keyframes stamp-settle {
+  0% { opacity: 0; transform: rotate(-3deg) scale(1.08); }
+  100% { opacity: 0.85; transform: rotate(-3deg) scale(1); }
+}
+
+/* The door unlocking: one ruled line that parts from the middle. */
+.outcome-door {
+  display: flex;
+  width: min(60vmin, 32rem);
+  height: 3px;
+}
+.outcome-door span {
+  flex: 1;
+  background: var(--approve);
+  animation: door-part 700ms cubic-bezier(0.2, 0, 0, 1) 300ms both;
+}
+.outcome-door span:first-child { transform-origin: left; }
+.outcome-door span:last-child { transform-origin: right; }
+
+@keyframes door-part {
+  0% { transform: scaleX(1); }
+  100% { transform: scaleX(0.12); }
+}
+
+@keyframes outcome-out {
+  to { opacity: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .face-body,
+  .outcome-stamp,
+  .outcome[data-outcome="refused"] .outcome-stamp,
+  .outcome-door span { animation: none; }
+  .outcome-stamp { transform: rotate(-6deg); }
+  .outcome[data-outcome="refused"] .outcome-stamp { transform: rotate(-3deg); }
+  .outcome-door span { transform: scaleX(0.12); }
+  .face[data-mood] .face-halo { animation: none; }
+  .face[data-mood="listening"] .face-halo { opacity: 0.4; stroke-width: 12; }
+  .face[data-mood="thinking"] .face-halo { opacity: 0.45; }
   .face-eye,
   .face[data-mood] .face-ears path,
   .face[data-mood] .face-thought circle { animation: none; }
