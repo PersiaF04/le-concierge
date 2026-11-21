@@ -29,6 +29,9 @@ npm run dev        # http://localhost:3000, ws://localhost:3000/live?flat=12
 | `VISITOR_WORKFLOW` | `visitor-arrival` | Workflow started by `POST /arrivals` |
 | `PARCEL_WORKFLOW` | `parcel-arrival` | Workflow started by `POST /parcels` |
 | `VISITOR_DECISION_TIMEOUT_SECONDS` | `60` | Passed to the workflow and shown as `timeoutSeconds` |
+| `WORKFLOW_DEPLOYMENT_NAME` | unset | Sent as `deployment_name` on execute, for when two deployments register the same workflow |
+| `VISIT_TTL_SECONDS` | `300` | A visit still waiting this long is swept to `expired` |
+| `MISTRAL_RETRY_BASE_MS` | `600` | First backoff when Mistral answers 429 or 5xx (4 attempts, doubling) |
 | `FACE_MATCH_THRESHOLD` | `0.5` | Largest Euclidean distance that counts as a face match |
 | `SEED_DEMO` | unset | `1` adds the demo resident `res_12_persia` at flat 12 |
 
@@ -52,8 +55,10 @@ decision only updates the visit. `GET /health` reports `mode: "offline"`.
 The same REST calls the Python SDK (`mistralai` 3.8) makes:
 
 - Start: `POST {MISTRAL_API_URL}/v1/workflows/{name}/execute` with
-  `Authorization: Bearer $MISTRAL_API_KEY` and body `{ "input": { ... } }`.
-  The response's `execution_id` is stored on the visit.
+  `Authorization: Bearer $MISTRAL_API_KEY` and body
+  `{ "input": { ... }, "deployment_name": "<WORKFLOW_DEPLOYMENT_NAME, omitted when unset>" }`.
+  The response's `execution_id` is stored on the visit. 429 and 5xx answers
+  are retried with backoff.
 - Signal: `POST {MISTRAL_API_URL}/v1/workflows/executions/{execution_id}/signals`
   with body `{ "name": "resident-decision", "input": { "decision", "resident_id", "note" } }`.
 
@@ -80,7 +85,7 @@ The same REST calls the Python SDK (`mistralai` 3.8) makes:
 
 ### `GET /health`
 
-`200 { status: "ok", timestamp, version, node, env, workflow, mode: "live"|"offline", key: "set"|"missing", visits }`
+`200 { status: "ok", timestamp, version, node, env, workflow, mode: "live"|"offline", key: "set"|"missing", visits, snapshots }`
 
 ### Residents and faces
 
@@ -134,10 +139,13 @@ A visit that was already decided keeps its decision.
 
 `201 { stored: true, visit_id, execution_id, status, notified_over: "ws:/live", visit: Visit }`, `400` without `visit_id`.
 
-#### `GET /visits?flat=&status=`
+#### `GET /visits?flat=&status=` and `GET /visits?waiting=1&flat=`
 
 `status=pending` returns the newest `arriving` or `pending_decision` Visit for
-the flat, or `null`. Any other `status` (or none) returns `Visit[]`, newest first.
+the flat, or `null`. `waiting=1` (or `status=pending&list=1`) returns the whole
+queue of waiting visits as `Visit[]`; `flat` is optional. Any other `status`
+(or none) returns `Visit[]`, newest first. Visits waiting longer than
+`VISIT_TTL_SECONDS` are swept to `expired` first.
 
 #### `GET /visits/:id`
 
@@ -168,6 +176,21 @@ keeps the wav, and pushes the visit on `/live`.
 #### `GET /intercom/audio/:visit_id.wav`
 
 The wav kept for a visit; this is `visit.speech.audioUrl`. `200 audio/wav`, `404` when none was kept.
+
+### Photographs
+
+#### `POST /snapshots`
+
+The phone or the door publishes the picture it just took. Body:
+`{ flat, dataUrl, source?: "resident-phone"|"door", by? }`; `dataUrl` must be a
+`data:image/` URL. The last one per flat is kept and pushed on `/live` as
+`{ type: "snapshot", snapshot }` to that flat's sockets.
+
+`201 { stored: true, snapshot }` (without `dataUrl`), `400` on missing or bad fields.
+
+#### `GET /snapshots?flat=`
+
+`200 Snapshot` `{ flat, dataUrl, source, by, at, bytes }`, `404` when the flat has none yet.
 
 ### Parcels
 
@@ -235,12 +258,13 @@ that flat changes, and never one for another flat:
 
 ```json
 { "type": "visit", "visit": { "id": "visit_…", "flat": "12", "...": "a full Visit" } }
+{ "type": "snapshot", "snapshot": { "flat": "12", "dataUrl": "data:image/…", "source": "door", "at": "…" } }
 ```
 
 ## Storage
 
 Tables: `residents`, `faces`, `visits`, `decisions`, `events`, `parcels`,
-`notifications`, `audio`. The schema version is `PRAGMA user_version`; add
+`notifications`, `audio`, `snapshots`. The schema version is `PRAGMA user_version`; add
 migrations to the end of `MIGRATIONS` in `server/db.js`, never edit an old one.
 Face descriptors are stored only for confirmed residents and are deleted with
 the resident.

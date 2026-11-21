@@ -43,6 +43,11 @@ export function configFromEnv(env = process.env) {
     parcelWorkflow: env.PARCEL_WORKFLOW || 'parcel-arrival',
     decisionTimeoutSeconds: Number(env.VISITOR_DECISION_TIMEOUT_SECONDS || 60),
     faceMatchThreshold: Number(env.FACE_MATCH_THRESHOLD || 0.5),
+    // Two deployments can register the same workflow name; this picks one.
+    deploymentName: env.WORKFLOW_DEPLOYMENT_NAME || undefined,
+    // A visit still waiting long after its own timeout is swept to "expired".
+    visitTtlSeconds: Number(env.VISIT_TTL_SECONDS || 300),
+    retryBaseMs: Number(env.MISTRAL_RETRY_BASE_MS || 600),
   };
 }
 
@@ -51,6 +56,7 @@ const newId = (prefix) =>
   `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const str = (value) => (value === undefined || value === null || value === '' ? null : String(value));
 const fail = (res, status, error) => res.status(status).json({ error });
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** A face-api.js descriptor: a non-empty array of finite numbers. */
 function isDescriptor(value) {
@@ -120,6 +126,14 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
       'INSERT INTO audio (visit_id, wav) VALUES (?, ?) ON CONFLICT(visit_id) DO UPDATE SET wav = excluded.wav',
     ),
     getAudio: db.prepare('SELECT wav FROM audio WHERE visit_id = ?'),
+    putSnapshot: db.prepare(
+      'INSERT INTO snapshots (flat, at, doc) VALUES (?, ?, ?) ON CONFLICT(flat) DO UPDATE SET at = excluded.at, doc = excluded.doc',
+    ),
+    getSnapshot: db.prepare('SELECT doc FROM snapshots WHERE flat = ?'),
+    countSnapshots: db.prepare('SELECT count(*) AS n FROM snapshots'),
+    staleVisits: db.prepare(
+      "SELECT doc FROM visits WHERE status IN ('arriving', 'pending_decision') AND at < ?",
+    ),
     presenceToday: db.prepare(
       `SELECT resident_id, type, at FROM events
        WHERE type IN ('${PRESENCE_IN}', '${PRESENCE_OUT}') AND resident_id IS NOT NULL AND at >= ?
@@ -183,6 +197,30 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
     }
   }
 
+  /** Push a photograph to the sockets watching its flat. */
+  function broadcastSnapshot(snapshot) {
+    const frame = JSON.stringify({ type: 'snapshot', snapshot });
+    for (const socket of clients) {
+      if (socket.flat !== String(snapshot.flat)) continue;
+      if (socket.readyState === Socket.OPEN) socket.send(frame);
+    }
+  }
+
+  /**
+   * Expire anything that can no longer be answered, and tell the sockets: an
+   * execution that died, or a demo from an hour ago, should not stay queued.
+   */
+  function sweepStaleVisits() {
+    const cutoff = new Date(Date.now() - config.visitTtlSeconds * 1000).toISOString();
+    for (const row of sql.staleVisits.all(cutoff)) {
+      const visit = parse(row);
+      visit.status = 'expired';
+      visit.decidedAt = nowIso();
+      saveVisit(visit);
+      broadcast(visit);
+    }
+  }
+
   function publicVisit(visit) {
     return {
       id: visit.id,
@@ -208,31 +246,46 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
   // Mistral Workflows
   // ==========================================================================
 
-  async function mistral(path, body) {
-    const response = await fetchImpl(`${config.mistralApiUrl}${path}`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${config.mistralApiKey}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-    const text = await response.text();
-    let parsed = null;
-    try {
-      parsed = text ? JSON.parse(text) : null;
-    } catch {
-      parsed = { raw: text.slice(0, 400) };
+  /**
+   * One call to the Mistral API, with the patience a doorbell needs: the API
+   * answers 429 when executions start in a burst, so 429 and 5xx are retried
+   * with backoff rather than turning the visit into a silent "fallback".
+   */
+  async function mistral(path, body, { attempts = 4 } = {}) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const response = await fetchImpl(`${config.mistralApiUrl}${path}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${config.mistralApiKey}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      const text = await response.text();
+      let parsed = null;
+      try {
+        parsed = text ? JSON.parse(text) : null;
+      } catch {
+        parsed = { raw: text.slice(0, 400) };
+      }
+      if (response.ok) return parsed;
+
+      lastError = new Error(`${path} -> ${response.status}: ${JSON.stringify(parsed).slice(0, 300)}`);
+      const retryable = response.status === 429 || response.status >= 500;
+      if (!retryable || attempt === attempts) throw lastError;
+      console.warn(`retrying ${path} after ${response.status} (attempt ${attempt})`);
+      await sleep(config.retryBaseMs * 2 ** (attempt - 1));
     }
-    if (!response.ok) {
-      throw new Error(`${path} -> ${response.status}: ${JSON.stringify(parsed).slice(0, 400)}`);
-    }
-    return parsed;
+    throw lastError ?? new Error(`${path} failed`);
   }
 
   /** Start one execution and return its id, which is what the signal needs. */
   async function execute(workflow, input) {
-    const execution = await mistral(`/v1/workflows/${workflow}/execute`, { input });
+    const execution = await mistral(`/v1/workflows/${workflow}/execute`, {
+      input,
+      deployment_name: config.deploymentName,
+    });
     return execution?.execution_id ?? execution?.id ?? null;
   }
 
@@ -251,6 +304,9 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'content-type');
+    // An https page (the Vercel build) reaching an API on localhost is a
+    // "private network" request: Chrome blocks it unless the preflight agrees.
+    res.header('Access-Control-Allow-Private-Network', 'true');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
   });
@@ -266,6 +322,7 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
       mode: config.offline ? 'offline' : 'live',
       key: config.mistralApiKey ? 'set' : 'missing',
       visits: sql.countVisits.get().n,
+      snapshots: sql.countSnapshots.get().n,
     });
   });
 
@@ -307,9 +364,10 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
       res.status(201).json({ visit_id: visit.id, execution_id: visit.executionId });
     } catch (error) {
       visit.status = 'fallback';
+      visit.error = String(error.message || error).slice(0, 200);
       saveVisit(visit);
       broadcast(visit);
-      res.status(502).json({ visit_id: visit.id, execution_id: null, error: String(error.message || error) });
+      res.status(502).json({ visit_id: visit.id, execution_id: null, error: visit.error });
     }
   });
 
@@ -490,8 +548,12 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
   // ── reads the apps need ───────────────────────────────────────────────────
 
   app.get('/visits', (req, res) => {
+    sweepStaleVisits();
     const flat = str(req.query.flat);
-    const status = str(req.query.status);
+    // ?waiting=1 is the whole queue; ?status=pending is the single current visit.
+    const waiting = req.query.waiting === '1';
+    const asList = waiting || req.query.list === '1';
+    const status = waiting ? 'pending' : str(req.query.status);
     const where = [];
     const args = [];
     if (flat) {
@@ -508,7 +570,7 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
       .all(...args);
     const list = rows.map((row) => publicVisit(parse(row)));
     // The apps ask for "the visit at my door": one visit, or null.
-    if (status === 'pending') return res.json(list[0] ?? null);
+    if (status === 'pending' && !asList) return res.json(list[0] ?? null);
     res.json(list);
   });
 
@@ -703,6 +765,43 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
     });
   });
 
+  // ── photographs, either direction ─────────────────────────────────────────
+
+  /**
+   * The phone and the door publish the picture they just took. The API keeps
+   * the last one per flat and pushes it over /live, so the other surface shows
+   * it without asking.
+   */
+  app.post('/snapshots', (req, res) => {
+    const body = req.body || {};
+    const flat = str(body.flat);
+    const dataUrl = typeof body.dataUrl === 'string' ? body.dataUrl : body.data_url;
+    if (!flat) return fail(res, 400, 'flat is required');
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+      return fail(res, 400, 'dataUrl must be a data:image URL');
+    }
+    const snapshot = {
+      flat,
+      dataUrl,
+      // Who took it, in the apps' words: "resident-phone" or "door".
+      source: body.source === 'door' ? 'door' : 'resident-phone',
+      by: body.by ?? null,
+      at: nowIso(),
+      bytes: Math.round((dataUrl.length * 3) / 4),
+    };
+    sql.putSnapshot.run(flat, snapshot.at, JSON.stringify(snapshot));
+    logEvent({ type: 'snapshot.taken', flat, source: snapshot.source });
+    broadcastSnapshot(snapshot);
+    res.status(201).json({ stored: true, snapshot: { ...snapshot, dataUrl: undefined } });
+  });
+
+  app.get('/snapshots', (req, res) => {
+    const flat = str(req.query.flat);
+    const snapshot = flat ? parse(sql.getSnapshot.get(flat)) : null;
+    if (!snapshot) return fail(res, 404, 'no photograph for that flat yet');
+    res.json(snapshot);
+  });
+
   // ── who's in ──────────────────────────────────────────────────────────────
 
   app.get('/presence', (req, res) => {
@@ -768,7 +867,12 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
     }
   }, 30000);
   heartbeat.unref();
-  server.on('close', () => clearInterval(heartbeat));
+  const sweeper = setInterval(sweepStaleVisits, 15000);
+  sweeper.unref();
+  server.on('close', () => {
+    clearInterval(heartbeat);
+    clearInterval(sweeper);
+  });
 
   // ==========================================================================
   // Errors

@@ -83,6 +83,13 @@ const MIGRATIONS = [
     visit_id TEXT PRIMARY KEY,
     wav BLOB NOT NULL
   );
+
+  -- The last photograph the phone or the door sent, one per flat.
+  CREATE TABLE snapshots (
+    flat TEXT PRIMARY KEY,
+    at TEXT NOT NULL,
+    doc TEXT NOT NULL
+  );
   `,
 ];
 

@@ -327,6 +327,44 @@ describe('offline API', () => {
     nine.socket.close();
   });
 
+  test('GET /visits?waiting=1 is the whole queue', async () => {
+    await api.post('/arrivals', { flat: '60' });
+    await api.post('/arrivals', { flat: '61' });
+    const all = (await api.get('/visits?waiting=1')).data;
+    assert.ok(Array.isArray(all));
+    assert.ok(all.some((v) => v.flat === '60') && all.some((v) => v.flat === '61'));
+    assert.ok(all.every((v) => v.status === 'arriving' || v.status === 'pending_decision'));
+    const one = (await api.get('/visits?waiting=1&flat=60')).data;
+    assert.deepEqual(one.map((v) => v.flat), ['60']);
+  });
+
+  test('POST /snapshots stores the photograph and pushes it to that flat only', async () => {
+    const twelve = await listen(`${api.ws}/live?flat=12`);
+    const nine = await listen(`${api.ws}/live?flat=9`);
+    await settle();
+    twelve.frames.length = 0;
+    nine.frames.length = 0;
+
+    assert.equal((await api.post('/snapshots', { flat: '12', dataUrl: 'http://x' })).status, 400);
+    assert.equal((await api.post('/snapshots', { dataUrl: 'data:image/png;base64,AA' })).status, 400);
+    assert.equal((await api.get('/snapshots?flat=77')).status, 404);
+
+    const stored = await api.post('/snapshots', { flat: '12', dataUrl: 'data:image/png;base64,AAAA', source: 'door' });
+    assert.equal(stored.status, 201);
+    assert.equal(stored.data.snapshot.dataUrl, undefined);
+    const fetched = (await api.get('/snapshots?flat=12')).data;
+    assert.equal(fetched.dataUrl, 'data:image/png;base64,AAAA');
+    assert.equal(fetched.source, 'door');
+
+    await settle();
+    assert.equal(twelve.frames.length, 1);
+    assert.equal(twelve.frames[0].type, 'snapshot');
+    assert.equal(twelve.frames[0].snapshot.flat, '12');
+    assert.equal(nine.frames.length, 0);
+    twelve.socket.close();
+    nine.socket.close();
+  });
+
   test('WS /live without a flat is refused', async () => {
     const code = await new Promise((resolve) => {
       const socket = new WebSocket(`${api.ws}/live`);
@@ -338,15 +376,27 @@ describe('offline API', () => {
 
 describe('live API with a fake Mistral', () => {
   const calls = [];
+  let busy = 0;
+  let refuse = false;
   const fakeMistral = async (url, init) => {
-    if (!String(url).startsWith('https://mistral.invalid')) return fetch(url, init);
     calls.push({ url: String(url), body: JSON.parse(init.body), auth: init.headers.authorization });
+    if (refuse) return new Response(JSON.stringify({ detail: 'no such workflow' }), { status: 404 });
+    if (busy > 0) {
+      busy -= 1;
+      return new Response('{}', { status: 429 });
+    }
     return new Response(JSON.stringify({ execution_id: 'exec_live_1' }), { status: 200 });
   };
   let api;
   before(async () => {
     api = await start({
-      env: { MISTRAL_API_KEY: 'test-key', MISTRAL_API_URL: 'https://mistral.invalid', NODE_ENV: 'test' },
+      env: {
+        MISTRAL_API_KEY: 'test-key',
+        MISTRAL_API_URL: 'https://mistral.invalid',
+        WORKFLOW_DEPLOYMENT_NAME: 'le-concierge-test',
+        MISTRAL_RETRY_BASE_MS: '1',
+        NODE_ENV: 'test',
+      },
       fetch: fakeMistral,
     });
   });
@@ -380,6 +430,39 @@ describe('live API with a fake Mistral', () => {
     assert.equal(created.data.execution_id, 'exec_live_1');
     assert.equal(calls.at(-1).url, 'https://mistral.invalid/v1/workflows/parcel-arrival/execute');
     assert.equal(calls.at(-1).body.input.parcel_id, created.data.parcel_id);
+  });
+
+  test('the execute call names the deployment and retries a 429', async () => {
+    busy = 2;
+    const before = calls.length;
+    const created = await api.post('/arrivals', { flat: '12' });
+    assert.equal(created.status, 201);
+    assert.equal(calls.length - before, 3, 'two 429s, then the start');
+    assert.equal(calls.at(-1).body.deployment_name, 'le-concierge-test');
+  });
+
+  test('a refused start marks the visit fallback', async () => {
+    refuse = true;
+    const created = await api.post('/arrivals', { flat: '12' });
+    refuse = false;
+    assert.equal(created.status, 502);
+    const visit = (await api.get(`/visits/${created.data.visit_id}`)).data;
+    assert.equal(visit.status, 'fallback');
+  });
+});
+
+describe('stale visits', () => {
+  let api;
+  before(async () => {
+    api = await start({ env: { WORKFLOWS_REPLAY: '1', NODE_ENV: 'test', VISIT_TTL_SECONDS: '0' } });
+  });
+  after(() => api.close());
+
+  test('a visit waiting past VISIT_TTL_SECONDS is swept to expired', async () => {
+    const { data } = await api.post('/arrivals', { flat: '12' });
+    await settle();
+    assert.equal((await api.get('/visits?flat=12&status=pending')).data, null);
+    assert.equal((await api.get(`/visits/${data.visit_id}`)).data.status, 'expired');
   });
 });
 
