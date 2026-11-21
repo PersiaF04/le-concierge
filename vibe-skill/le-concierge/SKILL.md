@@ -20,7 +20,7 @@ MCP tools; never guess or invent residents, visits, parcels or events.
 | Is anyone at the door? | `current_visits` with optional `flat` |
 
 All tools are read-only; Vibe lists them as `mcp_le_concierge.<tool>`. Call
-them in parallel when a question needs more than one when a question needs it, for
+them in parallel when a question needs more than one, for
 example "anything I should know today?" means `cctv_log` and `current_visits`.
 
 ## How to answer
