@@ -13,8 +13,8 @@ export async function isFlatTaken(flat: string): Promise<boolean | null> {
   try {
     const response = await fetch(`${apiBase}/flats/${encodeURIComponent(flat)}`);
     if (!response.ok) return null;
-    const body = (await response.json()) as { taken?: unknown };
-    return typeof body.taken === "boolean" ? body.taken : null;
+    const body = (await response.json()) as { hasResident?: unknown };
+    return typeof body.hasResident === "boolean" ? body.hasResident : null;
   } catch {
     return null;
   }

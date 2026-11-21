@@ -787,9 +787,11 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
 
   // ── residents and their faces ─────────────────────────────────────────────
 
-  /** Whoever else is registered at a flat, or undefined when it is free. */
+  /** Whoever else is registered at a flat ("07" is flat 7), or undefined when it is free. */
   const occupantOf = (flat, exceptId) =>
-    sql.residentsInFlat.all(flat).map(parse).find((resident) => resident.id !== exceptId);
+    [...new Set([flat, normalizeFlat(flat)])]
+      .flatMap((name) => sql.residentsInFlat.all(name).map(parse))
+      .find((resident) => resident.id !== exceptId);
 
   /**
    * Register a resident, or re-register one whose own id is given (a flat
@@ -830,12 +832,6 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
 
   app.post('/residents', (req, res) => saveResident(req, res, str(req.body?.id)));
   app.put('/residents/:id', (req, res) => saveResident(req, res, req.params.id));
-
-  /** Is a flat registered? Only yes or no: never who. */
-  app.get('/flats/:flat', (req, res) => {
-    const flat = String(req.params.flat).trim();
-    res.json({ flat, taken: Boolean(occupantOf(flat)) });
-  });
 
   app.post('/residents/:id/confirm', (req, res) => {
     const resident = getResident(req.params.id);
