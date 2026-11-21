@@ -1,0 +1,38 @@
+# Line endings: use LF for all text files
+* text=auto eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary
+
+# Database files
+*.db binary
+*.sqlite binary
+
+# Environment files
+.env* text
+
+# Documentation
+*.md text
+*.yaml text
+*.yml text
+*.json text
+*.toml text
+
+# Source code
+*.js text
+*.ts text
+*.jsx text
+*.tsx text
+
+# Configuration
+*.config.js text
+*.config.ts text

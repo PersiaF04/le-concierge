@@ -1,0 +1,526 @@
+# Le Concierge Architecture
+# 
+# This YAML file describes the system architecture using a structured format
+# that can be parsed by tools or rendered as diagrams.
+
+name: Le Concierge
+version: 1.0.0
+description: Smart intercom visitor recognition system for residential buildings
+kind: hackathon-project
+event: Mistral Vibe Hackathon London
+
+# ============================================================================
+# SYSTEM CONTEXT
+# ============================================================================
+system_context:
+  purpose: |
+    Provide intelligent visitor recognition and access control for residential
+    buildings without requiring sign-in or payments.
+  
+  actors:
+    - Visitor
+      description: Person arriving at the building
+      interactions:
+        - Speaks to intercom
+        - Has photo taken
+        - Waits for access decision
+    
+    - Resident
+      description: Person living in the building
+      interactions:
+        - Sets up profile (optional details)
+        - Receives visitor notifications
+        - Approves/denies access
+        - Confirms "that was me"
+    
+    - Concierge Staff
+      description: Building staff managing the system
+      interactions:
+        - Monitors all activity
+        - Manages resident database
+        - Handles edge cases
+
+# ============================================================================
+# COMPONENTS
+# ============================================================================
+components:
+  # --------------------------------------------------------------------------
+  # Intercom Device
+  # --------------------------------------------------------------------------
+  - id: intercom
+    name: Intercom Device
+    type: edge-device
+    description: |
+      Physical device at building entrance with camera, microphone, speaker,
+      and door release mechanism.
+    
+    technologies:
+      - MediaPipe (face detection)
+      - Node.js 22
+      - WebRTC (for audio streaming)
+      - Voxtral (voice recognition)
+    
+    capabilities:
+      - Capture visitor photo
+      - Capture visitor audio
+      - Play audio messages
+      - Release door
+      - Stream to server
+    
+    external_apis:
+      - Mistral Vision (cloud fallback)
+      - Voxtral (voice processing)
+
+  # --------------------------------------------------------------------------
+  # Server
+  # --------------------------------------------------------------------------
+  - id: server
+    name: Backend Server
+    type: backend-service
+    description: |
+      Central API server that processes visitor data, manages residents,
+      and coordinates between all components.
+    
+    technologies:
+      - Node.js 22
+      - Express.js
+      - WebSocket (real-time updates)
+      - SQLite (embedded database)
+    
+    endpoints:
+      - POST /residents
+      - POST /residents/{id}/confirm
+      - GET /events?flat=
+      - POST /visits/{id}/decision
+      - GET /presence
+      - WS /live
+    
+    capabilities:
+      - Resident management
+      - Visit tracking
+      - Presence detection
+      - Face recognition coordination
+      - Decision logging
+      - Nightly digest generation
+
+  # --------------------------------------------------------------------------
+  # Resident App
+  # --------------------------------------------------------------------------
+  - id: resident_app
+    name: Resident Application
+    type: web-application
+    description: |
+      Web/mobile app for residents to receive notifications, view visitors,
+      and control access.
+    
+    technologies:
+      - React
+      - Tailwind CSS
+      - face-api.js (opted-in face recognition)
+      - WebSocket client
+    
+    features:
+      - Anonymous setup (no sign-in required)
+      - Profile management (name, flat required; email, phone, WhatsApp optional)
+      - Visitor notifications (photo + live audio)
+      - Approve/deny access
+      - "That was me" confirmation
+      - Parcel alerts
+      - Presence status
+    
+    pages:
+      - /setup - Initial setup
+      - /dashboard - Overview and recent events
+      - /visitors - Current and past visitors
+      - /profile - Manage personal details
+      - /settings - App preferences
+
+  # --------------------------------------------------------------------------
+  # Concierge App
+  # --------------------------------------------------------------------------
+  - id: concierge_app
+    name: Concierge Application
+    type: web-application
+    description: |
+      Dashboard for concierge staff to monitor all building activity.
+    
+    technologies:
+      - React
+      - Tailwind CSS
+    
+    features:
+      - Real-time view of all intercoms
+      - Resident database management
+      - Visit history and analytics
+      - Manual override for door release
+      - Parcel management
+    
+    pages:
+      - /overview - All active visitors across building
+      - /residents - Resident database
+      - /history - Visit and access history
+      - /analytics - Usage statistics
+
+  # --------------------------------------------------------------------------
+  # Vibe Skill
+  # --------------------------------------------------------------------------
+  - id: vibe_skill
+    name: Vibe Skill
+    type: cli-plugin
+    description: |
+      Mistral Vibe plugin that provides Le Concierge-specific skills and
+      integrations for AI agents working on the project.
+    
+    capabilities:
+      - Project scaffolding
+      - Architecture validation
+      - Issue creation templates
+      - API testing helpers
+      - Deployment assistance
+
+# ============================================================================
+# DATA FLOW
+# ============================================================================
+data_flows:
+  - id: visitor_arrival
+    name: Visitor Arrival Flow
+    description: What happens when a visitor arrives at the intercom
+    steps:
+      1:
+        component: intercom
+        action: detect_motion
+        output: motion_detected event
+      2:
+        component: intercom
+        action: capture_photo
+        output: visitor_photo (base64)
+        replayable: true
+      3:
+        component: intercom
+        action: capture_audio
+        output: visitor_audio_stream
+        replayable: true
+      4:
+        component: intercom
+        action: run_media_pipe
+        input: visitor_photo
+        output: face_detection_result
+        description: On-device face detection
+      5:
+        component: intercom
+        action: send_to_server
+        input: [visitor_photo, face_detection_result, visitor_audio_stream]
+        output: visit_record
+        endpoint: POST /visits (implicit via WebSocket)
+      6:
+        component: server
+        action: process_visit
+        input: visit_record
+        output: recognition_result
+        description: |
+          - Try to match face against known residents
+          - If no match, create new visit record
+          - If match, associate with resident
+      7:
+        component: server
+        action: notify_residents
+        input: visit_record
+        output: notification_sent
+        description: Send push notification to relevant residents
+      8:
+        component: server
+        action: broadcast_websocket
+        input: visit_record
+        output: live_update
+        endpoint: WS /live
+
+  - id: resident_decision
+    name: Resident Decision Flow
+    description: What happens when a resident approves or denies a visitor
+    steps:
+      1:
+        component: resident_app
+        action: receive_notification
+        input: visit_record
+        output: notification_displayed
+      2:
+        component: resident_app
+        action: resident_view
+        input: visit_id
+        output: [photo_shown, audio_played]
+      3:
+        component: resident_app
+        action: resident_decide
+        input: [visit_id, decision]
+        output: decision_event
+        description: decision is "approve" or "deny"
+      4:
+        component: resident_app
+        action: send_decision
+        input: decision_event
+        endpoint: POST /visits/{id}/decision
+      5:
+        component: server
+        action: process_decision
+        input: decision_event
+        output: [door_command, notification]
+      6:
+        component: server
+        action: send_door_command
+        input: door_command
+        output: door_command_sent
+        endpoint: WS to intercom
+      7:
+        component: intercom
+        action: receive_door_command
+        input: door_command
+        output: door_action
+        description: Open door or play denial message
+
+  - id: that_was_me
+    name: "That Was Me" Flow
+    description: What happens when a resident confirms their own face
+    steps:
+      1:
+        component: resident_app
+        action: resident_confirm
+        input: [visit_id, "that was me"]
+        output: confirmation_event
+      2:
+        component: resident_app
+        action: send_confirmation
+        input: confirmation_event
+        endpoint: POST /residents/{id}/confirm
+      3:
+        component: server
+        action: store_face
+        input: confirmation_event
+        output: face_stored
+        description: |
+          - Store face encoding for future recognition
+          - Only after explicit confirmation
+      4:
+        component: server
+        action: update_model
+        input: face_stored
+        output: model_updated
+        description: Improve recognition accuracy for this resident
+
+# ============================================================================
+# AI INTEGRATION
+# ============================================================================
+ai_integrations:
+  - id: mistral_vision
+    name: Mistral Vision Model
+    component: server
+    trigger: face_detection_failed
+    description: |
+      When on-device face detection (MediaPipe) doesn't find a match,
+      send the photo to Mistral Vision for enhanced recognition.
+    endpoint: Mistral Vision API
+    input: visitor_photo
+    output: recognition_result
+    replayable: true
+    requires: MISTRAL_API_KEY
+
+  - id: voxtral
+    name: Voxtral Voice Model
+    component: intercom
+    trigger: visitor_speaking
+    description: |
+      Process visitor speech at the intercom to extract intent and identify
+      who they're visiting.
+    endpoint: Voxtral API
+    input: visitor_audio
+    output: speech_to_text_result
+    replayable: true
+    requires: MISTRAL_API_KEY
+
+  - id: le_chonk
+    name: Le Chonk (Mistral Large 4)
+    component: server
+    trigger: decision_needed
+    description: |
+      Use Le Chonk to make intelligent decisions about access, considering:
+      - Time of day
+      - Resident preferences
+      - Historical patterns
+      - Building rules
+    endpoint: Le Chonk API
+    input: decision_context
+    output: decision_recommendation
+    replayable: true
+    requires: MISTRAL_API_KEY
+
+# ============================================================================
+# DATABASE SCHEMA
+# ============================================================================
+database:
+  engine: SQLite
+  location: data/le-concierge.db
+  
+  tables:
+    - name: residents
+      description: Registered residents
+      columns:
+        - id: INTEGER PRIMARY KEY
+        - name: TEXT (optional)
+        - flat: TEXT (required)
+        - email: TEXT (optional)
+        - phone: TEXT (optional)
+        - whatsapp: TEXT (optional)
+        - face_encoding: BLOB (opted-in only)
+        - created_at: TEXT (timestamp)
+        - updated_at: TEXT (timestamp)
+      indexes:
+        - flat
+        - face_encoding (for fast matching)
+    
+    - name: visits
+      description: Visitor visits
+      columns:
+        - id: INTEGER PRIMARY KEY
+        - resident_id: INTEGER (nullable, if identified)
+        - photo_path: TEXT
+        - audio_path: TEXT
+        - status: TEXT (pending, approved, denied, completed)
+        - decision_by: INTEGER (resident_id who decided)
+        - decision_at: TEXT (timestamp)
+        - created_at: TEXT (timestamp)
+      indexes:
+        - resident_id
+        - status
+        - created_at
+    
+    - name: events
+      description: All system events
+      columns:
+        - id: INTEGER PRIMARY KEY
+        - type: TEXT (visit, decision, confirmation, parcel)
+        - flat: TEXT (for filtering)
+        - data: JSON (event-specific data)
+        - created_at: TEXT (timestamp)
+      indexes:
+        - flat
+        - type
+        - created_at
+    
+    - name: decisions
+      description: Access decisions
+      columns:
+        - id: INTEGER PRIMARY KEY
+        - visit_id: INTEGER
+        - resident_id: INTEGER
+        - decision: TEXT (approve, deny)
+        - ai_recommendation: TEXT (nullable)
+        - created_at: TEXT (timestamp)
+      indexes:
+        - visit_id
+        - resident_id
+    
+    - name: parcels
+      description: Parcel delivery alerts
+      columns:
+        - id: INTEGER PRIMARY KEY
+        - resident_id: INTEGER
+        - tracking_number: TEXT (optional)
+        - description: TEXT
+        - status: TEXT (pending, delivered, collected)
+        - photo_path: TEXT
+        - created_at: TEXT (timestamp)
+      indexes:
+        - resident_id
+        - status
+
+# ============================================================================
+# DEPLOYMENT
+# ============================================================================
+deployment:
+  environment: development
+  
+  services:
+    - name: server
+      port: 3000
+      replicas: 1
+      environment:
+        NODE_ENV: development
+        MISTRAL_API_KEY: "${MISTRAL_API_KEY}"
+      volumes:
+        - ./data:/app/data
+      
+    - name: intercom
+      port: 3001
+      replicas: 1 (per physical device)
+      environment:
+        SERVER_URL: http://localhost:3000
+        MISTRAL_API_KEY: "${MISTRAL_API_KEY}"
+      
+    - name: resident_app
+      port: 3002
+      replicas: 1
+      environment:
+        API_URL: http://localhost:3000
+        WS_URL: ws://localhost:3000
+      
+    - name: concierge_app
+      port: 3003
+      replicas: 1
+      environment:
+        API_URL: http://localhost:3000
+        WS_URL: ws://localhost:3000
+
+# ============================================================================
+# TESTING
+# ============================================================================
+testing:
+  frameworks:
+    - name: Node.js Test Runner
+      command: node --test
+      coverage: true
+    
+  types:
+    - unit: Test individual functions
+    - integration: Test component interactions
+    - e2e: Test full user journeys
+    - replay: Test with recorded API responses
+  
+  ci:
+    - runs_on: ubuntu-latest
+    - steps:
+      - Install dependencies
+      - Run linter
+      - Run tests
+      - Check coverage
+
+# ============================================================================
+# MONITORING
+# ============================================================================
+monitoring:
+  logging:
+    level: info
+    format: json
+    destinations:
+      - console
+      - file (logs/app.log)
+    
+  metrics:
+    - visits_processed
+    - decisions_made
+    - faces_recognized
+    - api_errors
+    - response_times
+  
+  alerts:
+    - High error rate (> 5% in 5 minutes)
+    - Slow response time (> 1 second)
+    - Database connection failures
+    - API key missing
+
+# ============================================================================
+# VERSION HISTORY
+# ============================================================================
+versions:
+  - version: 1.0.0
+    date: 2026-11-21
+    description: Initial architecture definition
+    author: Persia Lewis / Mistral Vibe

@@ -1,0 +1,8 @@
+# Resident App directory
+# Will contain:
+# - React web application for residents
+# - Anonymous setup flow
+# - Visitor notifications
+# - Access approval/denial
+# - "That was me" confirmation
+# - Parcel alerts

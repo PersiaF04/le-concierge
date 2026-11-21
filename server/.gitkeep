@@ -1,0 +1,9 @@
+# Server directory
+# Will contain:
+# - index.js (main server entry point)
+# - config/ (configuration files)
+# - routes/ (API routes)
+# - models/ (database models)
+# - middleware/ (Express middleware)
+# - utils/ (utility functions)
+# - db/ (database connection)

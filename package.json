@@ -1,0 +1,63 @@
+{
+  "name": "le-concierge-vibe",
+  "version": "0.1.0",
+  "description": "Smart intercom visitor recognition for residential buildings - Mistral Vibe Hackathon London",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "node server/index.js",
+    "start": "NODE_ENV=production node server/index.js",
+    "test": "node --test",
+    "test:watch": "node --test --watch",
+    "lint": "echo \"Linting...\" && node --check server/**/*.js apps/**/*.js",
+    "prep": "npm install"
+  },
+  "keywords": [
+    "intercom",
+    "smart-home",
+    "face-recognition",
+    "visitor-management",
+    "iot",
+    "mistral",
+    "vibe",
+    "hackathon",
+    "london"
+  ],
+  "author": "Persia Lewis <persialewis123@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PersiaF04/le-concierge-vibe.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PersiaF04/le-concierge-vibe/issues"
+  },
+  "homepage": "https://github.com/PersiaF04/le-concierge-vibe",
+  "dependencies": {
+    "express": "^4.19.0",
+    "ws": "^8.17.0",
+    "better-sqlite3": "^9.2.2",
+    "dotenv": "^16.4.0",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/ws": "^8.5.10",
+    "@types/node": "^22.0.0",
+    "@types/better-sqlite3": "^7.6.9",
+    "@types/cors": "^2.8.17"
+  },
+  "files": [
+    "server",
+    "apps",
+    "vibe-skill",
+    "docs",
+    "test"
+  ],
+  "export": {
+    ".": "./server/index.js"
+  }
+}

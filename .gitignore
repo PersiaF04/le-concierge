@@ -1,0 +1,95 @@
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.development
+.env.test
+.env.production
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test coverage
+coverage/
+
+# Build output
+dist/
+build/
+
+# Replay data (never commit)
+.replay/
+
+# Database
+*.db
+*.sqlite
+data/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Cache
+.cache/
+
+# Package lock (optional - only commit if using cache: npm in CI)
+# package-lock.json
+
+# Editor directories
+.atom/
+.sublime/
+
+# Local history
+.history/
+
+# Git
+.git/
+
+# Yarn
+.yarn/
+yarn.lock
+
+# Test results
+.test-cache/
+
+# Crash reports
+*.crash
+
+# IDE specific
+*.sublime-workspace
+*.sublime-project
+
+# macOS
+.AppleDouble
+.LSOverride
+
+# Windows
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# Mistral Vibe
+.vibe/
+
+# Local config
+local.env
