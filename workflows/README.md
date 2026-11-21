@@ -3,13 +3,14 @@
 The decision flows for Le Concierge, on **Mistral Workflows**. The Node API and
 both web apps stay as they are: this worker is the brain behind them.
 
-Three workflows:
+Four workflows:
 
 | Workflow | Runs when | Activities, in order |
 | --- | --- | --- |
 | `visitor-arrival` | MediaPipe fires at the door | describe snapshot (vision) → match face (face-api.js descriptor) → transcribe intercom (Voxtral) → Le Chonk decides → post visit to the API → **wait for the `resident-decision` signal** (timeout declines) → speak the reply → log |
 | `parcel-arrival` | A parcel reaches the desk | read the label (vision) → match the flat → Le Chonk writes the notice → notify the resident on their channel → log |
 | `nightly-digest` | Scheduled, 19:00 daily | pull the day's events from the API → Le Chonk writes the digest → post it → log |
+| `cctv-event` | MediaPipe sees a person on a CCTV camera | describe the frames (vision) → label the people → write the log line → log it as `cctv.<kind>` |
 
 The vision model never identifies anyone. Recognition is face-api.js
 descriptors on the concierge device, and only for residents who tapped
@@ -36,6 +37,7 @@ execution only progresses while a worker is up.
 uv run python scripts/run_workflow.py visitor-arrival --input fixtures/visitor_input.json
 uv run python scripts/run_workflow.py parcel-arrival  --input fixtures/parcel_input.json
 uv run python scripts/run_workflow.py nightly-digest  --input fixtures/digest_input.json
+uv run python scripts/run_workflow.py cctv-event      --input fixtures/cctv_input.json
 ```
 
 The Node API uses the same call:
@@ -61,6 +63,31 @@ client.workflows.executions.signal_workflow_execution(
 
 `visitor-arrival` waits on that signal; if it does not arrive within
 `VISITOR_DECISION_TIMEOUT_SECONDS`, the visit is declined automatically.
+
+## Log CCTV events
+
+`cctv-event` keeps the building's CCTV log the way a concierge would: one line
+per meaningful moment, such as "Delivery courier 5 rang 3 doorbells, then was
+let in and entered" or "Unknown person 4 tailgated into the building".
+
+The browser's MediaPipe gate only sends segments with a person in view. Input:
+`camera`, `started_at`, `ended_at`, up to 6 `frames` (image or `data:` URLs),
+`clip_url`, `known_people` (`name`, `resident_id`, `description`) and
+`recent_events` (the last few lines, so labels carry over).
+
+1. `describe_cctv_frames` (`VISION_MODEL`) lists the people seen: appearance,
+   what they carried, what they did, their direction, and any doorbell, fob,
+   lift or package interaction. No names.
+2. `label_people` (`DECISION_MODEL`) names a resident whose description
+   matches, and otherwise uses "Unknown person N" or "Delivery courier N",
+   reusing a label from `recent_events` when the appearance matches.
+3. `write_event` (`DECISION_MODEL`) writes one past-tense line and picks its
+   `kind`: arrival, departure, delivery, doorbell, lift, tailgate or other.
+4. `log_cctv_event` posts it to `POST /events` as `cctv.<kind>`.
+
+It returns `{discard, event: {text, kind, people, camera, started_at, ended_at,
+clip_url}, model: {vision, decision}}`. When the frames show nobody it returns
+`discard: true` and logs nothing.
 
 ## Schedule the digest
 
@@ -113,10 +140,10 @@ names the model: it is what tells a real model call from a fixture.
 uv run pytest -q
 ```
 
-The suite runs entirely in replay mode: it checks the three workflows register,
+The suite runs entirely in replay mode: it checks the four workflows register,
 that every activity reads its fixture, that the label parser picks the flat off
 the label, and that `visitor-arrival` declines on timeout and opens the door on
-approval.
+approval, and that `cctv-event` logs a tailgate and discards empty frames.
 
 ## Layout
 
