@@ -16,16 +16,16 @@
 
 ## Problem
 
-Residential buildings need a cost effective solution for handling visitor access. Traditional intercoms require physical presence and manual verification. Residents miss deliveries and visitors wait unnecessarily. There's no intelligent system that learns resident preferences or handles common scenarios automatically.
+Residential buildings need a cost effective solution for handling visitor access. Traditional concierge and intercom systems require physical presence and manual verification. Residents miss deliveries and visitors wait unnecessarily. What is required is an intelligent system that learns resident preferences and handles common scenarios automatically.
 
-## What It Does
+## What le-concierge Does
 
-Le Concierge is a smart intercom system that:
+Le Concierge is a concierge or smart intercom system that:
 
 - **Recognizes visitors** using on-device face recognition (MediaPipe) and cloud-based vision models
 - **Notifies residents** via a mobile/web app with visitor photos and live audio
-- **Learns preferences** using Le Chonk (Mistral Large 4) to make intelligent decisions
-- **Manages access** with voice interaction at the intercom (Voxtral)
+- **Learns preferences** using Le Chonk (Mistral Large 4) to provide an intelligent interactions
+- **Manages access** with voice interaction (Voxtral)
 - **Tracks presence** in real-time with WebSocket updates
 - **Sends digests** nightly to keep residents informed
 
@@ -40,14 +40,14 @@ See [docs/deploy.md](docs/deploy.md) for what is deployed, how it was deployed,
 and why the API and the worker cannot live on Vercel next to them.
 
 
-Watch a resident receive a visitor notification, see the live photo, hear the audio, and approve access — all from their phone. The system remembers "that was me" confirmations to improve future recognition.
+A resident receives a visitor notification, sees a photo of the visitor, live audio interaction, and approve access — all from their phone. The system remembers "that was me" confirmations to improve future recognition.
 
 ## How It Works
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│   Intercom      │────▶│    Server        │◀───┤   Resident App  │
-│   (Camera/Mic)  │     │    (API)         │     │   (Web/Mobile)  │
+│   Concierge     │────▶│    Server        │◀───┤   Resident App  │
+│   (Camera/Mic)  │     │    (API)         │    │   (Web/Mobile)  │
 └─────────────────┘     └────────┬────────┘     └─────────────────┘
                                        │
                                        ▼
@@ -70,18 +70,18 @@ Watch a resident receive a visitor notification, see the live photo, hear the au
 
 ### Data Flow
 
-1. **Visitor arrives** at intercom → Camera captures photo + audio
+1. **Visitor arrives** at concierge monitor → Camera captures photo + audio
 2. **Server processes** → MediaPipe face detection → Mistral vision model for recognition
 3. **Resident notified** → Photo + audio streamed to resident app
 4. **Resident decides** → Approve/Decline via app or voice (Voxtral at intercom)
-5. **Access granted/denied** → Intercom opens gate or plays message
+5. **Access granted/denied** → Concierge provides access or plays message
 6. **Learning** → "That was me" confirmations improve future recognition
 
 ## Track
 
 - **Category:** Smart Home / IoT
 - **Target:** Residential buildings, apartment complexes
-- **Innovation:** AI-powered visitor recognition without sign-in or payments
+- **Innovation:** AI-powered visitor recognition without sign-in or package reception
 
 ## Tech Stack
 
@@ -99,7 +99,7 @@ Watch a resident receive a visitor notification, see the live photo, hear the au
 
 ## Where we use Mistral Workflows and Agents
 
-The decision flows live in [`workflows/`](workflows/), a Python worker built on
+The decision flows live in [`workflows/`](workflows/), a web-based worker built on
 Mistral Workflows. The Node API and both web apps stay where they are; the
 workflows are the brains behind them, and every step survives a crash because
 each one is recorded in the execution history.
