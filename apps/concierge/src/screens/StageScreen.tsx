@@ -4,7 +4,11 @@ import "./stage.css";
 
 /** The demo stage (`#stage`): the door, the resident's phone and the workflow, at once. */
 
-const RESIDENT_URL = "https://le-concierge-resident.vercel.app";
+// The phone frame shows the resident app from the same host when the door is served under /door/
+// (harmony hosts both apps on one origin); otherwise the Vercel deployment. VITE_RESIDENT_URL overrides.
+const RESIDENT_URL =
+  (import.meta.env.VITE_RESIDENT_URL as string | undefined) ??
+  (import.meta.env.BASE_URL === "/door/" ? `${window.location.origin}/` : "https://le-concierge-resident.vercel.app");
 
 type StepStatus = "scheduled" | "started" | "completed" | "failed";
 interface Step {
