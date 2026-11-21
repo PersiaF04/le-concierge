@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   apiMode,
-  confidenceLabel,
   confirmThatWasMe,
   distanceLabel,
   fetchCurrentVisit,
@@ -10,10 +9,9 @@ import {
   formatTime,
   openLive,
   publishSnapshot,
-  secondsLabel,
+  recordedVisit,
   sendDecision,
   stampFor,
-  useCountdown,
   useWebcam,
   type Decision,
   type Resident,
@@ -21,8 +19,15 @@ import {
   type Visit,
 } from "@le-concierge/ui";
 
+/** The stamp for a visit; a fallback went to the desk rather than "recorded". */
+function stampOf(status: Visit["status"]): string {
+  return status === "fallback" ? "with the desk" : stampFor(status);
+}
+
 export default function VisitScreen({ resident }: { resident: Resident }) {
   const [visit, setVisit] = useState<Visit | null>(null);
+  /** False until the API has answered, so "nobody at the door" is never a guess. */
+  const [loaded, setLoaded] = useState(false);
   const [pending, setPending] = useState<Decision | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [remote, setRemote] = useState<"ws" | "none">("none");
@@ -36,14 +41,23 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
   useEffect(() => {
     let alive = true;
     void fetchCurrentVisit(resident.flat).then((next) => {
-      if (alive) setVisit(next);
+      if (!alive) return;
+      // Live, the API saying "nobody is waiting" means an empty doorstep, not
+      // the recorded demo visit. A socket frame may have landed first; it is
+      // at least as fresh.
+      const real = apiMode === "live" && next.id === recordedVisit.id ? null : next;
+      setVisit((current) => current ?? real);
+      setLoaded(true);
     });
     void fetchSnapshot(resident.flat).then((shot) => {
       if (alive && shot) setRemoteShot(shot);
     });
     const link = openLive(
       resident.flat,
-      (next) => setVisit(next),
+      (next) => {
+        setVisit(next);
+        setLoaded(true);
+      },
       (shot) => setRemoteShot(shot),
     );
     setRemote(link.transport);
@@ -64,7 +78,6 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
   }, [resident.flat, visit?.id]);
 
   const waiting = visit?.status === "pending_decision";
-  const left = useCountdown(visit?.timeoutSeconds ?? 0, Boolean(waiting));
 
   const decide = useCallback(
     async (decision: Decision) => {
@@ -95,7 +108,14 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
   if (!visit) {
     return (
       <div className="screen">
-        <p className="mono small muted">reading the log…</p>
+        {loaded ? (
+          <article className="entry" aria-labelledby="entry-title">
+            <h2 id="entry-title">Nobody is at the door.</h2>
+            <p className="muted">When someone rings for flat {resident.flat}, they will appear here.</p>
+          </article>
+        ) : (
+          <p className="mono small muted">reading the log…</p>
+        )}
       </div>
     );
   }
@@ -122,6 +142,8 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
       setNotice("No frame yet — the camera needs a second to open.");
       return;
     }
+    // The photograph freezes in the same frame the camera was showing.
+    camera.stop();
     const stored = await publishSnapshot({
       flat: resident.flat,
       dataUrl: data,
@@ -154,7 +176,7 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
             {formatTime(visit.at)}
           </time>
           <span className="stamp" data-status={visit.status}>
-            {stampFor(visit.status)}
+            {stampOf(visit.status)}
           </span>
         </div>
 
@@ -167,18 +189,12 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
 
         {visit.transcript ? (
           <blockquote className="quote">“{visit.transcript}”</blockquote>
-        ) : (
-          <p className="small muted">no intercom audio, so nobody spoke into it</p>
-        )}
+        ) : null}
 
         <div className="facts">
           <div className="record-line">
             <span>face</span>
             <b>{visit.faceDistance === null ? "no face on record" : distanceLabel(visit.faceDistance)}</b>
-          </div>
-          <div className="record-line">
-            <span>sure it is your flat</span>
-            <b>{confidenceLabel(visit.confidence)}</b>
           </div>
           {visit.parcel ? (
             <div className="record-line">
@@ -198,13 +214,10 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
 
         {waiting ? (
           <div className="sign">
-            <p className="mono small muted" aria-live="polite">
-              {secondsLabel(left)} until the door stays shut
-            </p>
             <div className="sign-line" aria-hidden="true" />
             <div className="sign-actions">
               <button type="button" className="btn" onClick={() => void decide("approve")} disabled={pending !== null}>
-                Sign and open <span className="mono small">{secondsLabel(left)}</span>
+                Sign and open
               </button>
               <button
                 type="button"
@@ -219,14 +232,18 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
         ) : (
           <div className="resolved">
             <div className="stamp stamp-landed" data-status={visit.status}>
-              {stampFor(visit.status)}
+              {stampOf(visit.status)}
             </div>
             <p className="muted">
               {visit.status === "approved"
                 ? "The door opened. Your answer was stamped in the log."
                 : visit.status === "declined"
-                  ? "The door stayed shut. The visitor was told to try later."
-                  : "No answer reached the intercom in time, so the door stayed shut."}
+                  ? "You left it shut. The visitor was told to try later."
+                  : visit.status === "arriving"
+                    ? "Someone just rang. The concierge is listening to them and will ask you here if it is for you."
+                    : visit.status === "fallback"
+                      ? "The concierge could not start on this visit, so the desk is looking after it."
+                      : "No answer reached the intercom in time, so the door stayed shut."}
             </p>
             {visit.status === "approved" && !remembered ? (
               <button type="button" className="btn-quiet full" onClick={() => void remember()}>
@@ -244,7 +261,9 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
         ) : null}
 
         <figure className="intercom-shot">
-          {snapshot ? (
+          {camera.state === "live" ? (
+            <video ref={camera.attach} muted playsInline aria-label="This phone's camera" />
+          ) : snapshot ? (
             <img src={snapshot} alt={`The intercom's view of the door at ${formatTime(visit.at)}`} />
           ) : (
             <div className="shot-empty" aria-hidden="true">
@@ -276,10 +295,6 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
                 : "Use this laptop's camera instead"}
           </button>
         )}
-
-        {camera.state === "live" ? (
-          <video className="camera-preview" ref={camera.attach} muted playsInline />
-        ) : null}
 
         {camera.state === "denied" || camera.state === "unsupported" ? (
           <p className="small muted">
