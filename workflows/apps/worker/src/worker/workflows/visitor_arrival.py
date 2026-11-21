@@ -108,6 +108,12 @@ async def speak_reply(reply: dict[str, Any]) -> dict[str, Any]:
         "text": audio.get("text"),
         "model": audio.get("model"),
         "voice_id": audio.get("voice_id"),
+        # "realtime" when the audio arrived as deltas over the websocket,
+        # "batch" when the fallback answered. Never guessed.
+        "transport": audio.get("transport"),
+        "streaming_mode": audio.get("streaming_mode"),
+        "chunks": audio.get("chunks"),
+        "first_chunk_ms": audio.get("first_chunk_ms"),
         "audio_bytes": audio.get("audio_bytes", 0),
         "played": played.get("played"),
         "duration_ms": played.get("duration_ms"),

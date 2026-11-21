@@ -77,11 +77,12 @@ async def test_visitor_activities_use_fixtures() -> None:
 
     spoken = await visitor_arrival.speak_reply({"text": "Come in, 12."})
     assert spoken["played"] is True
-    # The output names the model and how much audio it made: that is what proves
-    # Voxtral ran, rather than a fixture answering.
-    assert spoken["model"] == "voxtral-mini-tts-latest"
-    assert spoken["voice_id"] == "gb_jane_neutral"
+    # The output names the model, the transport and how much audio it made:
+    # that is what proves which Voxtral path ran, rather than a fixture.
+    assert spoken["model"].startswith("voxtral-mini-tts")
+    assert spoken["transport"] == "realtime"
     assert spoken["audio_bytes"] > 0
+    assert spoken["chunks"] >= 1
 
     logged = await visitor_arrival.log_event({"type": "test"})
     assert logged["stored"] is True

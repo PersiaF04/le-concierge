@@ -38,6 +38,7 @@ class Settings:
     decision_model: str
     speech_model: str
     speech_voice_id: str
+    speech_realtime: bool
     decision_timeout_seconds: float
     replay: bool
     fixtures_dir: Path
@@ -62,8 +63,11 @@ def load_settings() -> Settings:
         vision_model=os.getenv("VISION_MODEL", "pixtral-large-latest"),
         transcription_model=os.getenv("TRANSCRIPTION_MODEL", "voxtral-mini-latest"),
         decision_model=os.getenv("DECISION_MODEL", "mistral-large-latest"),
-        speech_model=os.getenv("SPEECH_MODEL", "voxtral-mini-tts-latest"),
+        # The door speaks through Voxtral's realtime endpoint, so the audio
+        # arrives in deltas while the sentence is still being generated.
+        speech_model=os.getenv("SPEECH_MODEL", "voxtral-mini-tts-3-0"),
         speech_voice_id=os.getenv("SPEECH_VOICE_ID", "gb_jane_neutral"),
+        speech_realtime=_flag("SPEECH_REALTIME", "1"),
         decision_timeout_seconds=float(
             os.getenv("VISITOR_DECISION_TIMEOUT_SECONDS", str(DEFAULT_DECISION_TIMEOUT_SECONDS))
         ),

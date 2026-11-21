@@ -176,10 +176,83 @@ async def chonk_write(
 
 
 async def synthesize_reply(settings: Settings, text_value: str) -> dict[str, Any]:
-    """Voxtral text to speech: the audio the intercom plays."""
+    """Voxtral text to speech: the audio the intercom plays.
+
+    The reply is spoken over Voxtral's realtime endpoint, so the first audio
+    delta reaches the door while the sentence is still being generated. The
+    batch endpoint stays as the fallback, and ``transport`` names which one
+    answered, so an execution output never has to guess.
+    """
 
     if settings.replay:
         return load_fixture(settings, "speech")
+
+    if settings.speech_realtime:
+        try:
+            return await _synthesize_realtime(settings, text_value)
+        except Exception as exc:  # noqa: BLE001 - the batch endpoint is the fallback
+            batched = await _synthesize_batch(settings, text_value)
+            batched["fallback_reason"] = f"{type(exc).__name__}: {exc}"[:200]
+            return batched
+    return await _synthesize_batch(settings, text_value)
+
+
+async def _synthesize_realtime(settings: Settings, text_value: str) -> dict[str, Any]:
+    """Stream the reply over one websocket: text in, audio deltas out."""
+
+    import time
+
+    from mistralai.client import Mistral
+
+    client = Mistral(api_key=require_api_key(settings))
+    started = time.perf_counter()
+    connection = await client.audio.realtime_speech.connect(
+        model=settings.speech_model,
+        voice_id=settings.speech_voice_id,
+    )
+    session = connection.session
+    buffer = bytearray()
+    chunks = 0
+    first_chunk_ms: float | None = None
+    try:
+        await connection.send_text(text_value)
+        await connection.end()
+        async for event in connection:
+            kind = getattr(event, "type", None)
+            if kind == "speech.audio.delta":
+                buffer.extend(base64.b64decode(event.audio_data))
+                if first_chunk_ms is None:
+                    first_chunk_ms = round((time.perf_counter() - started) * 1000, 1)
+                chunks += 1
+            elif kind == "speech.audio.done":
+                break
+            elif kind == "error":
+                raise RuntimeError(f"realtime speech error: {getattr(event, 'message', event)}")
+    finally:
+        await connection.close()
+
+    voice = getattr(session, "voice", None)
+    result = {
+        "text": text_value,
+        "model": getattr(session, "model", None) or settings.speech_model,
+        "voice_id": voice if isinstance(voice, str) and voice else settings.speech_voice_id,
+        "transport": "realtime",
+        "streaming_mode": str(getattr(session, "streaming_mode", "responsive")),
+        "response_format": str(getattr(session, "response_format", "wav")),
+        "chunks": chunks,
+        "first_chunk_ms": first_chunk_ms,
+        "audio_base64": base64.b64encode(bytes(buffer)).decode("ascii") if buffer else "",
+        # Bytes of audio actually synthesized: the number that shows, in an
+        # activity output, whether the speech model ran or a fixture answered.
+        "audio_bytes": len(buffer),
+    }
+    if _should_record():
+        save_fixture(settings, "speech", result)
+    return result
+
+
+async def _synthesize_batch(settings: Settings, text_value: str) -> dict[str, Any]:
+    """One request, one file. Used when the realtime socket is unavailable."""
 
     response = _client(settings).audio.speech.complete(
         model=settings.speech_model,
@@ -201,9 +274,10 @@ async def synthesize_reply(settings: Settings, text_value: str) -> dict[str, Any
         "text": text_value,
         "model": settings.speech_model,
         "voice_id": settings.speech_voice_id,
+        "transport": "batch",
+        "chunks": 1 if encoded else 0,
+        "first_chunk_ms": None,
         "audio_base64": encoded,
-        # Bytes of audio actually synthesized: the number that shows, in an
-        # activity output, whether the speech model ran or a fixture answered.
         "audio_bytes": decoded_bytes,
     }
     if _should_record():
