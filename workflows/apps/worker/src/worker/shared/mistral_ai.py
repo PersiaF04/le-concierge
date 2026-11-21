@@ -114,6 +114,43 @@ async def describe_scene(
     return result
 
 
+_AUDIO_EXTENSIONS = {
+    "audio/webm": "webm",
+    "video/webm": "webm",
+    "audio/ogg": "ogg",
+    "audio/wav": "wav",
+    "audio/x-wav": "wav",
+    "audio/wave": "wav",
+    "audio/mp4": "mp4",
+    "video/mp4": "mp4",
+}
+
+
+def _decode_data_url(audio_url: str) -> dict[str, Any] | None:
+    """Turn a browser recording sent as ``data:<mime>;base64,...`` into an upload.
+
+    Mistral cannot fetch a ``data:`` URL, so the bytes go up as a file. Returns
+    ``None`` when the URL is malformed or carries no audio.
+    """
+
+    header, sep, body = audio_url.partition(",")
+    if not sep or ";base64" not in header:
+        return None
+    mime = header[len("data:"):].split(";", 1)[0].strip().lower()
+    try:
+        content = base64.b64decode(body)
+    except (ValueError, TypeError):
+        return None
+    if not content:
+        return None
+    extension = _AUDIO_EXTENSIONS.get(mime, "webm")
+    return {
+        "file_name": f"intercom.{extension}",
+        "content": content,
+        "content_type": mime or f"audio/{extension}",
+    }
+
+
 async def transcribe_intercom_audio(
     settings: Settings,
     audio_url: str,
@@ -123,10 +160,19 @@ async def transcribe_intercom_audio(
     if settings.replay:
         return load_fixture(settings, "transcribe")
 
-    response = _client(settings).audio.transcriptions.complete(
-        model=settings.transcription_model,
-        file_url=audio_url,
-    )
+    if audio_url.startswith("data:"):
+        upload = _decode_data_url(audio_url)
+        if upload is None:
+            return {"text": ""}
+        response = _client(settings).audio.transcriptions.complete(
+            model=settings.transcription_model,
+            file=upload,
+        )
+    else:
+        response = _client(settings).audio.transcriptions.complete(
+            model=settings.transcription_model,
+            file_url=audio_url,
+        )
     text = getattr(response, "text", "") or ""
     result = {"text": text}
     if _should_record():
@@ -142,7 +188,8 @@ async def chonk_decide(
 
     fixture_key = context.get("fixture_key", "chonk_visitor")
     if settings.replay:
-        return load_fixture(settings, fixture_key)
+        # Studio shows the activity output, so name the model on replays too.
+        return {**load_fixture(settings, fixture_key), "model": settings.decision_model, "replay": True}
 
     prompt = (
         "You are Le Chonk, the decision maker for a residential intercom. "
@@ -163,7 +210,8 @@ async def chonk_decide(
     result = _parse_json(_text_of(response))
     if _should_record():
         save_fixture(settings, fixture_key, result)
-    return result
+    # The model that answered, as Mistral reports it, so decide_visit shows it in Studio.
+    return {**result, "model": getattr(response, "model", None) or settings.decision_model}
 
 
 async def chonk_write(

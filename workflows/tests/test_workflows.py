@@ -71,6 +71,7 @@ async def test_visitor_activities_use_fixtures() -> None:
     choice = await visitor_arrival.decide_visit({"flat_hint": None})
     assert choice["flat"] == "12"
     assert choice["action"] == "ask"
+    assert choice["model"]  # decide_visit names the decision model in Studio
 
     visited = await visitor_arrival.post_visit({"visit_id": "visit_0001"})
     assert visited["status"] == "pending_resident"
@@ -225,3 +226,83 @@ async def test_api_client_refuses_real_calls_without_a_key(
     monkeypatch.setenv("WORKFLOWS_REPLAY", "0")
     with pytest.raises(Exception):
         await api.notify_resident(config.load_settings(), {"flat": "12"})
+
+
+class _FakeTranscriptions:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def complete(self, **kwargs):
+        self.calls.append(kwargs)
+        return type("Response", (), {"text": "parcel for flat twelve"})()
+
+
+def _fake_client(monkeypatch: pytest.MonkeyPatch) -> _FakeTranscriptions:
+    from worker.shared import mistral_ai
+
+    transcriptions = _FakeTranscriptions()
+    client = type("Client", (), {})()
+    client.audio = type("Audio", (), {"transcriptions": transcriptions})()
+    monkeypatch.setattr(mistral_ai, "_client", lambda settings: client)
+    return transcriptions
+
+
+@pytest.mark.parametrize(
+    ("mime", "extension"),
+    [
+        ("audio/webm;codecs=opus", "webm"),
+        ("audio/ogg;codecs=opus", "ogg"),
+        ("audio/wav", "wav"),
+        ("audio/mp4", "mp4"),
+    ],
+)
+async def test_transcribe_uploads_data_url_audio(
+    monkeypatch: pytest.MonkeyPatch, mime: str, extension: str
+) -> None:
+    import base64
+
+    from worker.shared import mistral_ai
+
+    monkeypatch.setenv("WORKFLOWS_REPLAY", "0")
+    transcriptions = _fake_client(monkeypatch)
+    audio = b"\x1aE\xdf\xa3fake-recording"
+    url = f"data:{mime};base64," + base64.b64encode(audio).decode("ascii")
+
+    settings = config.load_settings()
+    result = await mistral_ai.transcribe_intercom_audio(settings, url)
+
+    assert result == {"text": "parcel for flat twelve"}
+    (call,) = transcriptions.calls
+    assert call["model"] == settings.transcription_model
+    assert "file_url" not in call
+    assert call["file"]["content"] == audio
+    assert call["file"]["file_name"] == f"intercom.{extension}"
+    assert call["file"]["content_type"] == mime.split(";")[0]
+
+
+@pytest.mark.parametrize("url", ["data:audio/webm;base64,", "data:audio/webm;base64,@@@", "data:audio/webm,raw"])
+async def test_transcribe_empty_or_bad_data_url_returns_empty(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    from worker.shared import mistral_ai
+
+    monkeypatch.setenv("WORKFLOWS_REPLAY", "0")
+    transcriptions = _fake_client(monkeypatch)
+
+    result = await mistral_ai.transcribe_intercom_audio(config.load_settings(), url)
+
+    assert result == {"text": ""}
+    assert transcriptions.calls == []
+
+
+async def test_transcribe_keeps_http_urls(monkeypatch: pytest.MonkeyPatch) -> None:
+    from worker.shared import mistral_ai
+
+    monkeypatch.setenv("WORKFLOWS_REPLAY", "0")
+    transcriptions = _fake_client(monkeypatch)
+
+    await mistral_ai.transcribe_intercom_audio(config.load_settings(), "https://example.invalid/a.webm")
+
+    (call,) = transcriptions.calls
+    assert call["file_url"] == "https://example.invalid/a.webm"
+    assert "file" not in call
