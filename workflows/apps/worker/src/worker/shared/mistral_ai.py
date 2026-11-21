@@ -142,7 +142,8 @@ async def chonk_decide(
 
     fixture_key = context.get("fixture_key", "chonk_visitor")
     if settings.replay:
-        return load_fixture(settings, fixture_key)
+        # Studio shows the activity output, so name the model on replays too.
+        return {**load_fixture(settings, fixture_key), "model": settings.decision_model, "replay": True}
 
     prompt = (
         "You are Le Chonk, the decision maker for a residential intercom. "
@@ -163,7 +164,8 @@ async def chonk_decide(
     result = _parse_json(_text_of(response))
     if _should_record():
         save_fixture(settings, fixture_key, result)
-    return result
+    # The model that answered, as Mistral reports it, so decide_visit shows it in Studio.
+    return {**result, "model": getattr(response, "model", None) or settings.decision_model}
 
 
 async def chonk_write(
