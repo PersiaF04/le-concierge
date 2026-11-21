@@ -32,6 +32,7 @@ Le Concierge is a smart intercom system that:
 ## Demo
 
 Pitch deck: [docs/pitch/index.html](docs/pitch/index.html) (script in [docs/pitch/script.md](docs/pitch/script.md), PDF backup in [docs/pitch/pitch.pdf](docs/pitch/pitch.pdf)).
+Short 2-minute deck with a scan-to-join QR code: [docs/pitch/short.html](docs/pitch/short.html).
 
 The two web apps are deployed in recorded-run mode:
 

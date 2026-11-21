@@ -144,6 +144,75 @@ This is the slide for the Agents and Workflows bonus: say it plainly.
 
 ---
 
+## 2-minute version
+
+The short deck is [`short.html`](short.html) (PDF backup
+[`short.pdf`](short.pdf)): four slides, about two to three minutes, with the
+audience as the residents. Same keys: `F` full screen, arrows or Space, `D`
+dark. The QR code on slides 2 and 4 is also a standalone file,
+[`qr-resident.svg`](qr-resident.svg), to print or show separately. It opens
+`https://le-concierge-resident.vercel.app`.
+
+| Slide | Time | Length |
+| --- | --- | --- |
+| 1. Hook and problem | 0:00 | 0:20 |
+| 2. Live demo: scan to become a resident | 0:20 | 1:30 |
+| 3. How it works and where we use Mistral | 1:50 | 0:35 |
+| 4. What's next, team | 2:25 | 0:15 |
+
+Before you go on: the same checks as above, plus the door tab
+(`le-concierge-door.vercel.app`) loaded with the mic allowed.
+
+### 1. Hook and problem (20 s)
+
+> This is Le Concierge. Every building gets a front desk: a face at the door
+> you can just talk to, and a resident who answers from their pocket. The
+> intercom hasn't changed in forty years: if you're not next to it, the
+> courier leaves or a stranger tailgates in. A 24-hour desk costs too much, so
+> we built one.
+
+### 2. Live demo: scan to become a resident (1:30)
+
+> Get your phones out. Scan this, pick any flat from 1 to 300, and we'll ring
+> your door.
+
+Audience flow:
+
+1. **Scan.** Leave the slide up for about 15 seconds. Read the URL out for
+   anyone without a camera.
+2. **Set up a flat.** Each person picks a flat, 1 to 300, on the resident
+   app. Ask one person, loudly, which flat they picked.
+3. **Ask the door.** Switch to the door tab, hold **Space**, and say:
+   *"Hi, I'm here to see flat 42"* (their number).
+   > The door is a Mistral Voice Agent: Voxtral hears me and speaks back.
+   > That just called a tool, which started a Mistral Workflow.
+4. **Their phone shows the visitor.** Ask them to hold it up.
+   > The workflow posted the visit to their phone, and now it's paused,
+   > waiting for them.
+5. **They tap Sign and open.**
+6. **The door says they're admitted.**
+   > That tap was a signal. The workflow woke up on it and the door told me.
+   > Every step is recorded in Studio.
+
+If nobody's phone works in time, use the presenter's phone, set up as
+flat 12, and carry on.
+
+### 3. How it works and where we use Mistral (35 s)
+
+> The door is a Voice Agent. Its tools start four Workflows in Studio:
+> visitor-arrival waits on the resident's signal, nightly-digest runs on a
+> schedule, plus parcels and CCTV. Le Chonk does the jobs that can wait, the
+> digest, parcel notices and CCTV review; it took 74 seconds at the door, so
+> Small keeps the door live. Voxtral hears and speaks. And the building
+> manager asks Vibe, through our MCP server, who's in the building.
+
+### 4. What's next, team (15 s)
+
+> Next: CCTV across every camera, phone calls, and every building. I'm Persia;
+> the QR is still up, so keep ringing the door. Thank you.
+
+---
+
 ## Likely questions
 
 - **Why not Le Chonk at the door?** Measured: full reasoning took 74 s for the
