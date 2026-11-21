@@ -137,6 +137,13 @@
   text-wrap: pretty;
 }
 
+.quote-short {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .facts {
   display: grid;
   gap: var(--s2);

@@ -57,7 +57,7 @@ export default function SetupScreen({ onDone }: { onDone: (resident: Resident) =
             name="flat"
             inputMode="numeric"
             autoComplete="off"
-            placeholder="12"
+            placeholder="your flat"
             value={flat}
             onChange={(event) => {
               setFlat(event.target.value);
