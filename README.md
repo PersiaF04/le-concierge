@@ -110,6 +110,7 @@ each one is recorded in the execution history.
 | `parcel-arrival` | Parcel photographed at the desk | read the label (Mistral vision) → match the flat → Le Chonk writes the notice → notify the resident on their channel → log | — |
 | `nightly-digest` | Scheduled, `0 19 * * *` in `Europe/London` | pull the day's events from the API → Le Chonk writes the digest → post it → log | — |
 | `cctv-event` | MediaPipe sees a person on a CCTV camera | describe the frames (Mistral vision) → label the people (a resident by description, else "Unknown person N" or "Delivery courier N") → write one past-tense log line → log it as `cctv.<kind>` | `discard: true` when the frames show nobody |
+| **Mistral Vibe** + `le-concierge` MCP | The building manager asks Vibe in the terminal, e.g. "anything suspicious today?" | the `le-concierge` skill picks the read-only MCP tools ([`mcp/`](mcp/)) → they read presence, events, CCTV, visits and parcels from the live API → Vibe answers briefly, suspicious CCTV first | no contact details ever shown |
 
 Agents: Le Chonk, inside the activities, runs on the **Mistral Agents SDK**
 (durable agents are being deprecated), so the decision prompt, tools and model
@@ -145,6 +146,51 @@ Offline, and in CI, everything runs from recorded activity results:
 
 ```bash
 WORKFLOWS_REPLAY=1 uv run python -m worker.entrypoints.worker
+```
+
+## Talk to the building from Mistral Vibe
+
+A building manager can ask [Mistral Vibe](https://docs.mistral.ai/vibe) about
+the building from the terminal. Two pieces make that work:
+
+- [`mcp/`](mcp/), a read-only stdio MCP server over the live API:
+  `who_is_in` (`GET /presence`), `todays_events` (`GET /events`),
+  `parcels` (`GET /parcels`), `current_visits` (`GET /visits?waiting=1`)
+  and `cctv_log` (`cctv.*` events, suspicious ones such as tailgating
+  flagged first). Each tool answers with a short summary plus the JSON, with
+  residents' contact details removed.
+- [`vibe-skill/le-concierge/SKILL.md`](vibe-skill/le-concierge/SKILL.md), the
+  Vibe skill: act as the manager's assistant, answer briefly, suspicious CCTV
+  first, never reveal contact details.
+
+Setup:
+
+```bash
+git clone https://github.com/PersiaF04/le-concierge ~/le-concierge-mcp
+cd ~/le-concierge-mcp/mcp && npm install && npm test
+```
+
+Then add both to `~/.vibe/config.toml` (use absolute paths):
+
+```toml
+skill_paths = ["/home/you/le-concierge-mcp/vibe-skill"]   # keep your existing entries
+
+[[mcp_servers]]
+name = "le-concierge"
+transport = "stdio"
+command = "node"
+args = ["/home/you/le-concierge-mcp/mcp/index.js"]
+
+[mcp_servers.env]
+LE_CONCIERGE_API_URL = "https://harmony.tailb80b97.ts.net:10000"   # or http://localhost:3000
+```
+
+`LE_CONCIERGE_API_URL` defaults to the demo API. Example prompts:
+
+```bash
+vibe "Who's in the building right now?"
+vibe "Anything suspicious on the cameras today?"
+vibe -p "Any parcels for flat 7, and is anyone waiting at the door for them?"
 ```
 
 ## Run Locally
