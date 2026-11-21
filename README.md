@@ -31,6 +31,8 @@ Le Concierge is a smart intercom system that:
 
 ## Demo
 
+Pitch deck: [docs/pitch/index.html](docs/pitch/index.html) (script in [docs/pitch/script.md](docs/pitch/script.md), PDF backup in [docs/pitch/pitch.pdf](docs/pitch/pitch.pdf)).
+
 The two web apps are deployed in recorded-run mode:
 
 - the phone: https://le-concierge-resident.vercel.app

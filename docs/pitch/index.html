@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Le Concierge — pitch</title>
+<style>
+  /* Logbook tokens, from DESIGN.md (packages/ui/src/styles.css). */
+  :root {
+    --paper: oklch(0.962 0.004 250);
+    --paper-2: oklch(0.988 0.003 250);
+    --ink: oklch(0.24 0.014 250);
+    --ink-2: oklch(0.5 0.012 250);
+    --rule: oklch(0.87 0.008 250);
+    --stamp: oklch(0.45 0.09 255);
+    --approve: oklch(0.42 0.09 155);
+    --alert: oklch(0.5 0.13 40);
+    --cheek: oklch(0.87 0.012 250);
+    --sans: "Instrument Sans", "Segoe UI", "Helvetica Neue", Arial, system-ui, sans-serif;
+    --mono: "IBM Plex Mono", "Cascadia Mono", Consolas, "SF Mono", Menlo, ui-monospace, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: oklch(0.245 0.012 250);
+      --paper-2: oklch(0.295 0.012 250);
+      --ink: oklch(0.955 0.004 250);
+      --ink-2: oklch(0.73 0.008 250);
+      --rule: oklch(0.36 0.01 250);
+      --stamp: oklch(0.76 0.09 255);
+      --approve: oklch(0.78 0.11 155);
+      --alert: oklch(0.78 0.12 45);
+      --cheek: oklch(0.36 0.012 250);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: oklch(0.245 0.012 250);
+    --paper-2: oklch(0.295 0.012 250);
+    --ink: oklch(0.955 0.004 250);
+    --ink-2: oklch(0.73 0.008 250);
+    --rule: oklch(0.36 0.01 250);
+    --stamp: oklch(0.76 0.09 255);
+    --approve: oklch(0.78 0.11 155);
+    --alert: oklch(0.78 0.12 45);
+    --cheek: oklch(0.36 0.012 250);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--paper); color: var(--ink); }
+  body { font-family: var(--sans); overflow: hidden; -webkit-font-smoothing: antialiased; }
+
+  /* A fixed 1920 x 1080 stage, scaled to the window. */
+  .deck { position: fixed; inset: 0; display: grid; place-items: center; }
+  .stage { width: 1920px; height: 1080px; position: relative; transform-origin: center center; flex: none; }
+  .slide {
+    position: absolute; inset: 0; padding: 88px 120px 112px;
+    display: none; flex-direction: column; background: var(--paper);
+  }
+  .slide.on { display: flex; }
+
+  /* The ledger frame on every slide. */
+  .folio {
+    position: absolute; left: 120px; right: 120px; bottom: 48px;
+    display: flex; justify-content: space-between; border-top: 2px solid var(--ink);
+    padding-top: 14px; font: 500 24px/1 var(--mono); color: var(--ink-2); letter-spacing: 0.04em;
+  }
+  .eyebrow { font: 500 26px/1 var(--mono); color: var(--ink-2); letter-spacing: 0.08em; text-transform: uppercase; }
+  h1 { font-size: 168px; line-height: 0.95; font-weight: 600; letter-spacing: -0.035em; }
+  h2 { font-size: 76px; line-height: 1.04; font-weight: 600; letter-spacing: -0.025em; margin-top: 22px; max-width: 1600px; }
+  p, li { font-size: 38px; line-height: 1.32; }
+  .mono { font-family: var(--mono); }
+  .muted { color: var(--ink-2); }
+  .stamp-c { color: var(--stamp); }
+  .ok { color: var(--approve); }
+
+  /* Rubber stamp, the deck's one bold move, as in the apps. */
+  .stamp {
+    display: inline-block; border: 5px solid var(--stamp); color: var(--stamp);
+    font: 700 40px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 16px 26px 14px; transform: rotate(-3deg);
+  }
+  .stamp.green { border-color: var(--approve); color: var(--approve); }
+
+  /* 1. Title */
+  .title-grid { flex: 1; display: grid; grid-template-columns: 1fr 520px; gap: 80px; align-items: center; }
+  .hook { font-size: 54px; line-height: 1.18; font-weight: 500; margin-top: 44px; max-width: 1060px; }
+  .sub { font: 500 30px/1.5 var(--mono); color: var(--ink-2); margin-top: 44px; }
+  .face { width: 520px; height: 520px; }
+  .face .line { fill: none; stroke: var(--ink); stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+  .face .eye { fill: var(--ink); }
+  .face .cheek { fill: var(--cheek); }
+
+  /* 2. Problem */
+  .story { margin-top: 56px; display: grid; grid-template-columns: 220px 1fr; border-top: 2px solid var(--ink); }
+  .story > div { padding: 22px 0; border-bottom: 2px solid var(--rule); }
+  .story .t { font: 500 34px/1.4 var(--mono); color: var(--ink-2); }
+  .story .e { font-size: 42px; line-height: 1.3; }
+  .punch { margin-top: 48px; font-size: 46px; line-height: 1.25; font-weight: 600; max-width: 1640px; }
+
+  /* 3. Demo ledger */
+  .ledger { margin-top: 44px; border-top: 2px solid var(--ink); }
+  .row { display: grid; grid-template-columns: 90px 1fr 520px; align-items: baseline; border-bottom: 2px solid var(--rule); padding: 17px 0; }
+  .row .n { font: 600 34px/1 var(--mono); color: var(--ink-2); }
+  .row .what { font-size: 40px; line-height: 1.22; font-weight: 500; }
+  .row .where { font: 500 28px/1.3 var(--mono); color: var(--ink-2); text-align: right; }
+
+  /* 4. Architecture */
+  .arch { margin-top: 28px; flex: 1; }
+  .arch svg { width: 100%; height: 100%; display: block; }
+  .arch .box { fill: var(--paper-2); stroke: var(--ink); stroke-width: 3; }
+  .arch .boxs { fill: var(--paper-2); stroke: var(--stamp); stroke-width: 4; }
+  .arch .sep { stroke: var(--rule); stroke-width: 2; }
+  .arch .wire { stroke: var(--ink); stroke-width: 3.5; fill: none; }
+  .arch .wire.sig { stroke: var(--stamp); stroke-dasharray: 12 8; }
+  .arch .wire.thin { stroke: var(--ink-2); stroke-width: 2.5; stroke-dasharray: 4 7; }
+  .arch text { fill: var(--ink); font-family: var(--sans); }
+  .arch .h { font-size: 34px; font-weight: 600; }
+  .arch .b { font-size: 26px; }
+  .arch .m { font-family: var(--mono); font-size: 22px; fill: var(--ink-2); }
+  .arch .ms { font-family: var(--mono); font-size: 22px; fill: var(--stamp); font-weight: 600; }
+  .arch .wf { font-family: var(--mono); font-size: 27px; font-weight: 600; }
+  .arch .tag { fill: none; stroke: var(--stamp); stroke-width: 2.5; }
+  .arch .head { fill: var(--ink); }
+  .arch .heads { fill: var(--stamp); }
+
+  /* 5. Where we use Mistral */
+  table { width: 100%; border-collapse: collapse; margin-top: 36px; }
+  th { text-align: left; font: 500 24px/1 var(--mono); color: var(--ink-2); letter-spacing: 0.08em; text-transform: uppercase; padding: 0 20px 14px 0; border-bottom: 2px solid var(--ink); }
+  td { font-size: 31px; line-height: 1.25; padding: 15px 20px 15px 0; border-bottom: 2px solid var(--rule); vertical-align: top; }
+  td:first-child { font-weight: 600; white-space: nowrap; width: 330px; }
+  td .mono { font-size: 26px; white-space: nowrap; }
+  .badge { display: inline-block; font: 600 20px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; border: 3px solid currentColor; padding: 6px 10px 5px; margin-left: 10px; vertical-align: 4px; }
+  .badge.live { color: var(--approve); }
+  .badge.wip { color: var(--alert); }
+
+  /* 6. Privacy */
+  .rules { margin-top: 48px; display: grid; grid-template-columns: 1fr 1fr; column-gap: 96px; border-top: 2px solid var(--ink); }
+  .rules > div { padding: 28px 0; border-bottom: 2px solid var(--rule); }
+  .rules h3 { font-size: 44px; line-height: 1.15; font-weight: 600; }
+  .rules p { font-size: 32px; color: var(--ink-2); margin-top: 10px; }
+
+  /* 7. Next */
+  .next { margin-top: 48px; border-top: 2px solid var(--ink); }
+  .next > div { display: grid; grid-template-columns: 520px 1fr; gap: 48px; padding: 30px 0; border-bottom: 2px solid var(--rule); align-items: baseline; }
+  .next h3 { font-size: 48px; font-weight: 600; line-height: 1.1; }
+  .next p { font-size: 34px; color: var(--ink-2); }
+
+  /* 8. Team and links */
+  .end { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 96px; margin-top: 40px; }
+  .links { border-top: 2px solid var(--ink); }
+  .links > div { padding: 22px 0; border-bottom: 2px solid var(--rule); }
+  .links .k { font: 500 24px/1 var(--mono); color: var(--ink-2); letter-spacing: 0.08em; text-transform: uppercase; }
+  .links .v { font: 500 34px/1.3 var(--mono); margin-top: 10px; word-break: break-all; }
+  .thanks { display: flex; flex-direction: column; gap: 96px; }
+
+  .hint { position: fixed; right: 16px; bottom: 12px; font: 12px var(--mono); color: var(--ink-2); opacity: 0.6; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .slide.on .stamp { animation: land 220ms ease-out both; }
+    @keyframes land { from { transform: rotate(-3deg) scale(1.35); opacity: 0; } to { transform: rotate(-3deg) scale(1); opacity: 1; } }
+  }
+
+  @page { size: 1920px 1080px; margin: 0; }
+  @media print {
+    html, body { overflow: visible; height: auto; }
+    .deck { position: static; display: block; }
+    .stage { transform: none !important; height: auto; }
+    .slide { position: relative; display: flex !important; width: 1920px; height: 1080px; break-after: page; page-break-after: always; }
+    .slide:last-child { break-after: auto; page-break-after: auto; }
+    .hint { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="deck">
+<div class="stage" id="stage">
+
+<!-- 1. Title -->
+<section class="slide" aria-label="Title">
+  <p class="eyebrow">Mistral Vibe Hackathon London · 21 Nov 2026</p>
+  <div class="title-grid">
+    <div>
+      <h1>Le Concierge</h1>
+      <p class="hook">Every building gets a front desk: a face at the door you can just talk to, and a resident who answers from their pocket.</p>
+      <p class="sub">Voice Agent · Workflows · Le Chonk · Voxtral · Vibe</p>
+    </div>
+    <svg class="face" viewBox="0 0 240 240" role="img" aria-label="Le Concierge's face">
+      <circle class="line" cx="120" cy="120" r="88" />
+      <path class="line" d="M74 90 q15 -11 31 -4" />
+      <path class="line" d="M135 86 q16 -7 31 4" />
+      <circle class="eye" cx="92" cy="112" r="7" />
+      <circle class="eye" cx="148" cy="112" r="7" />
+      <circle class="cheek" cx="72" cy="140" r="9" />
+      <circle class="cheek" cx="168" cy="140" r="9" />
+      <path class="line" d="M118 120 q-6 15 4 19" />
+      <path class="line" d="M92 156 q28 28 56 0" />
+    </svg>
+  </div>
+  <div class="folio"><span>Le Concierge</span><span>01 / 08</span></div>
+</section>
+
+<!-- 2. Problem -->
+<section class="slide" aria-label="The problem">
+  <p class="eyebrow">The problem</p>
+  <h2>The intercom has not changed in forty years. It still needs you standing next to it.</h2>
+  <div class="story">
+    <div class="t">19:42</div><div class="e">A courier buzzes flat 12 with a parcel for Persia.</div>
+    <div class="t">19:42</div><div class="e">Persia is on the fourth floor, in the shower. The handset rings once.</div>
+    <div class="t">19:43</div><div class="e">Nobody answers. The courier tailgates the next resident in, or leaves.</div>
+    <div class="t">19:44</div><div class="e">A “sorry we missed you” card. A stranger in the lobby. No record of either.</div>
+  </div>
+  <p class="punch">Big buildings fix this with a 24-hour concierge desk. Most buildings can’t pay for one. <span class="stamp-c">We built the desk.</span></p>
+  <div class="folio"><span>Le Concierge</span><span>02 / 08</span></div>
+</section>
+
+<!-- 3. Demo cue -->
+<section class="slide" aria-label="Live demo">
+  <p class="eyebrow">Live demo · what you’ll see</p>
+  <h2>Ring the door. Talk to it. Answer from the phone.</h2>
+  <div class="ledger">
+    <div class="row"><span class="n">01</span><span class="what">Press the bell. The face wakes up and greets you.</span><span class="where">door · Voice Agent</span></div>
+    <div class="row"><span class="n">02</span><span class="what">Say who you’re visiting. Interrupt it, it listens.</span><span class="where">Voxtral in, Voxtral out</span></div>
+    <div class="row"><span class="n">03</span><span class="what">It calls a tool, which starts a durable workflow.</span><span class="where">ask_resident → visitor-arrival</span></div>
+    <div class="row"><span class="n">04</span><span class="what">The resident’s phone shows the visitor. Sign and open.</span><span class="where">resident app</span></div>
+    <div class="row"><span class="n">05</span><span class="what">The workflow wakes on that signal. The face tells you.</span><span class="where">signal: resident-decision</span></div>
+    <div class="row"><span class="n">06</span><span class="what">The whole run, step by step, in Studio.</span><span class="where">Studio → Executions</span></div>
+    <div class="row"><span class="n">07</span><span class="what">The manager asks Vibe: “who’s in the building?”</span><span class="where">Vibe + MCP</span></div>
+  </div>
+  <div class="folio"><span>Le Concierge</span><span>03 / 08</span></div>
+</section>
+
+<!-- 4. Architecture -->
+<section class="slide" aria-label="How it works">
+  <p class="eyebrow">How it works</p>
+  <div class="arch">
+    <svg viewBox="0 0 1680 790" role="img" aria-label="The door's voice agent calls tools that start Mistral Workflows in Studio; the visitor flow posts the visit to the resident's phone and waits for its approve or decline signal; CCTV segments feed cctv-event; a building manager queries the building from Mistral Vibe through an MCP server; all of it goes through the Le Concierge API.">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path class="head" d="M0 0 L10 5 L0 10 z"/></marker>
+        <marker id="ahs" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path class="heads" d="M0 0 L10 5 L0 10 z"/></marker>
+      </defs>
+
+      <!-- Door -->
+      <rect class="box" x="10" y="10" width="380" height="330"/>
+      <text class="m" x="34" y="48">THE DOOR · any screen</text>
+      <text class="h" x="34" y="98">Mistral Voice Agent</text>
+      <text class="b" x="34" y="144">mistral-small, live turns</text>
+      <text class="b" x="34" y="182">Voxtral realtime in + TTS out</text>
+      <text class="b" x="34" y="220">WebRTC, barge-in</text>
+      <text class="ms" x="34" y="276">tools: ask_resident,</text>
+      <text class="ms" x="34" y="308">log_event, hang_up</text>
+
+      <!-- Workflows -->
+      <rect class="boxs" x="560" y="10" width="620" height="600"/>
+      <text class="m" x="584" y="48">MISTRAL WORKFLOWS · in Studio</text>
+      <text class="h" x="584" y="96">Durable, every step recorded</text>
+      <line class="sep" x1="560" y1="122" x2="1180" y2="122"/>
+      <text class="wf" x="584" y="166">visitor-arrival</text>
+      <text class="m" x="584" y="200">describe → match face → transcribe</text>
+      <text class="m" x="584" y="230">→ decide → post visit</text>
+      <text class="ms" x="584" y="262">⏸ waits for resident-decision</text>
+      <text class="m" x="584" y="292">→ speak reply (Voxtral)</text>
+      <line class="sep" x1="560" y1="316" x2="1180" y2="316"/>
+      <text class="wf" x="584" y="358">parcel-arrival</text>
+      <text class="m" x="584" y="390">read label → Le Chonk notice → notify</text>
+      <line class="sep" x1="560" y1="414" x2="1180" y2="414"/>
+      <text class="wf" x="584" y="456">nightly-digest</text>
+      <text class="ms" x="900" y="456">⏱ 19:00 daily</text>
+      <text class="m" x="584" y="488">day’s events → Le Chonk digest</text>
+      <line class="sep" x1="560" y1="512" x2="1180" y2="512"/>
+      <text class="wf" x="584" y="554">cctv-event</text>
+      <text class="m" x="584" y="588">frames → log line → Le Chonk review</text>
+
+      <!-- Phone -->
+      <rect class="box" x="1290" y="10" width="380" height="330"/>
+      <text class="m" x="1314" y="48">RESIDENT PHONE · web</text>
+      <text class="h" x="1314" y="98">Sign and open</text>
+      <text class="b" x="1314" y="144">or leave it shut</text>
+      <text class="b" x="1314" y="182">no account needed</text>
+      <text class="b" x="1314" y="220">“that was me”, opt-in</text>
+      <text class="b" x="1314" y="258">parcels, daily digest</text>
+
+      <!-- Door <-> visitor-arrival -->
+      <path class="wire" d="M390 170 H556" marker-end="url(#ah)"/>
+      <text class="m" x="400" y="156">ask_resident</text>
+      <path class="wire" d="M560 236 H394" marker-end="url(#ah)"/>
+      <text class="m" x="400" y="270">the answer</text>
+
+      <!-- visitor-arrival <-> phone -->
+      <path class="wire" d="M1180 170 H1286" marker-end="url(#ah)"/>
+      <text class="m" x="1192" y="156">visit</text>
+      <path class="wire sig" d="M1290 262 H1184" marker-end="url(#ahs)"/>
+      <text class="ms" x="1192" y="298">signal</text>
+
+      <!-- CCTV -->
+      <rect class="box" x="10" y="440" width="380" height="170"/>
+      <text class="m" x="34" y="478">CCTV CAMERAS</text>
+      <text class="h" x="34" y="526">MediaPipe on device</text>
+      <text class="b" x="34" y="570">only frames with a person</text>
+      <path class="wire" d="M390 550 H556" marker-end="url(#ah)"/>
+
+      <!-- Vibe -->
+      <rect class="box" x="1290" y="440" width="380" height="170"/>
+      <text class="m" x="1314" y="478">BUILDING MANAGER</text>
+      <text class="h" x="1314" y="526">Mistral Vibe + MCP</text>
+      <text class="b" x="1314" y="560">“who’s in the building?”</text>
+      <text class="m" x="1314" y="594">MCP → the building’s API</text>
+
+      <!-- Models band -->
+      <rect class="box" x="10" y="680" width="1660" height="100"/>
+      <text x="34" y="742" xml:space="preserve"><tspan class="h">Le Chonk</tspan><tspan class="b"> (Large 4) thinks: digest, notices, CCTV review     </tspan><tspan class="h">Small</tspan><tspan class="b"> keeps the door live     </tspan><tspan class="h">Voxtral</tspan><tspan class="b"> hears and speaks</tspan></text>
+    </svg>
+  </div>
+  <div class="folio"><span>Le Concierge</span><span>04 / 08</span></div>
+</section>
+
+<!-- 5. Where we use Mistral -->
+<section class="slide" aria-label="Where we use Mistral">
+  <p class="eyebrow">Where we use Mistral</p>
+  <table>
+    <thead><tr><th>Piece</th><th>Where and how</th></tr></thead>
+    <tbody>
+      <tr><td>Voice Agent</td><td>The door <em>is</em> the agent: a live voice session per door, mistral-small on the turns, tools <span class="mono">ask_resident</span>, <span class="mono">log_event</span>, <span class="mono">hang_up</span>.</td></tr>
+      <tr><td>Workflows</td><td><span class="mono">visitor-arrival</span> waits on the <span class="mono">resident-decision</span> signal · <span class="mono">parcel-arrival</span> · <span class="mono">nightly-digest</span> on a 19:00 schedule · <span class="mono">cctv-event</span>. All visible in Studio.</td></tr>
+      <tr><td>Le Chonk</td><td>Large 4 does the jobs that can wait: the nightly digest, parcel notices, flagging suspicious CCTV. At full reasoning it took 74 s, too slow for someone on the step, so Small runs the door.</td></tr>
+      <tr><td>Voxtral</td><td>Realtime transcription and TTS inside the voice agent; transcribe and speak the reply in <span class="mono">visitor-arrival</span>, one voice for both.</td></tr>
+      <tr><td>Vibe + MCP <span class="badge live">live</span></td><td>A <span class="mono">le-concierge</span> MCP server and skill: Vibe answers “who’s in?”, “any parcels?”, “anything odd on CCTV?”.</td></tr>
+    </tbody>
+  </table>
+  <div class="folio"><span>Le Concierge</span><span>05 / 08</span></div>
+</section>
+
+<!-- 6. Privacy -->
+<section class="slide" aria-label="Privacy by design">
+  <p class="eyebrow">Privacy by design</p>
+  <h2>A concierge remembers residents, not strangers.</h2>
+  <div class="rules">
+    <div><h3>Faces stay on the device</h3><p>MediaPipe and face-api.js run in the browser at the door.</p></div>
+    <div><h3>Stored only after “that was me”</h3><p>Recognition is opt-in, one tap by the resident.</p></div>
+    <div><h3>Visitors are never enrolled</h3><p>The vision model describes a scene. It never identifies anyone.</p></div>
+    <div><h3>No account, no password</h3><p>Use the phone app anonymously, or leave details if you want them.</p></div>
+  </div>
+  <div class="folio"><span>Le Concierge</span><span>06 / 08</span></div>
+</section>
+
+<!-- 7. Next -->
+<section class="slide" aria-label="What's next">
+  <p class="eyebrow">What’s next</p>
+  <h2>From one door to the whole building.</h2>
+  <div class="next">
+    <div><h3>Every camera</h3><p>Multi-camera CCTV and lift tracking: one log of who came in, where they went, and what looked wrong.</p></div>
+    <div><h3>Every phone line</h3><p>The same voice agent on a phone number, so a visitor can call the desk and older intercoms can dial it.</p></div>
+    <div><h3>Every building</h3><p>One concierge per building, one face per door, one workflow history for the managing agent.</p></div>
+  </div>
+  <div class="folio"><span>Le Concierge</span><span>07 / 08</span></div>
+</section>
+
+<!-- 8. Team and links -->
+<section class="slide" aria-label="Team and links">
+  <p class="eyebrow">Team and links</p>
+  <h2>Come and ring the door.</h2>
+  <div class="end">
+    <div class="links">
+      <div><p class="k">The door</p><p class="v">le-concierge-door.vercel.app</p></div>
+      <div><p class="k">The resident phone</p><p class="v">le-concierge-resident.vercel.app</p></div>
+      <div><p class="k">The live API</p><p class="v">harmony.tailb80b97.ts.net:10000/health</p></div>
+      <div><p class="k">Code</p><p class="v">github.com/PersiaF04/le-concierge</p></div>
+    </div>
+    <div class="thanks">
+      <div class="links">
+        <div><p class="k">Built by</p><p class="v" style="font-family: var(--sans); font-weight: 600; font-size: 44px;">Persia</p><p class="muted mono" style="font-size: 28px; margin-top: 6px;">@PersiaF04</p></div>
+      </div>
+      <p><span class="stamp green">Signed · door open</span></p>
+    </div>
+  </div>
+  <div class="folio"><span>Le Concierge</span><span>08 / 08</span></div>
+</section>
+
+</div>
+</div>
+<p class="hint">← → space · D dark · F fullscreen</p>
+
+<script>
+(function () {
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var stage = document.getElementById('stage');
+  var i = 0;
+
+  function fit() {
+    var s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+    stage.style.transform = 'scale(' + s + ')';
+  }
+
+  function show(n) {
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach(function (el, k) { el.classList.toggle('on', k === i); });
+    if (location.hash !== '#' + (i + 1)) history.replaceState(null, '', '#' + (i + 1));
+  }
+
+  function toggleTheme() {
+    var root = document.documentElement;
+    var dark = root.dataset.theme
+      ? root.dataset.theme === 'dark'
+      : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+  }
+
+  window.addEventListener('keydown', function (e) {
+    var k = e.key;
+    if (k === 'ArrowRight' || k === 'ArrowDown' || k === 'PageDown' || k === ' ' || k === 'Enter') { e.preventDefault(); show(i + 1); }
+    else if (k === 'ArrowLeft' || k === 'ArrowUp' || k === 'PageUp' || k === 'Backspace') { e.preventDefault(); show(i - 1); }
+    else if (k === 'Home') show(0);
+    else if (k === 'End') show(slides.length - 1);
+    else if (k === 'd' || k === 'D') toggleTheme();
+    else if ((k === 'f' || k === 'F') && document.documentElement.requestFullscreen) {
+      if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen();
+    }
+  });
+  document.addEventListener('click', function (e) {
+    if (e.target.closest('a')) return;
+    show(e.clientX < window.innerWidth / 3 ? i - 1 : i + 1);
+  });
+
+  var params = new URLSearchParams(location.search);
+  if (params.get('theme')) document.documentElement.dataset.theme = params.get('theme');
+  window.addEventListener('resize', fit);
+  fit();
+  show((parseInt(location.hash.slice(1), 10) || 1) - 1);
+})();
+</script>
+</body>
+</html>
