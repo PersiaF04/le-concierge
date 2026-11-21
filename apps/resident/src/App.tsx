@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiMode, useTheme, type Resident } from "@le-concierge/ui";
+import { useTheme, type Resident } from "@le-concierge/ui";
 import { loadResident, saveResident } from "./storage";
 import SetupScreen from "./screens/SetupScreen";
 import VisitScreen from "./screens/VisitScreen";
@@ -16,6 +16,9 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("visit");
 
   useEffect(() => saveResident(resident), [resident]);
+  useEffect(() => {
+    document.title = resident ? `Le Concierge — flat ${resident.flat}` : "Le Concierge";
+  }, [resident]);
 
   return (
     <div className="shell">
@@ -26,9 +29,6 @@ export default function App() {
             <p className="phone-name">{resident?.name?.trim() || "Le Concierge"}</p>
           </div>
           <div className="phone-head-actions">
-            <span className="mode-badge mono" data-mode={apiMode}>
-              {apiMode === "live" ? "live" : "recorded run"}
-            </span>
             <button
               type="button"
               className="btn-ghost mono small theme-toggle"
@@ -44,9 +44,9 @@ export default function App() {
           {!resident ? (
             <SetupScreen onDone={setResident} />
           ) : tab === "visit" ? (
-            <VisitScreen resident={resident} />
+            <VisitScreen key={resident.flat} resident={resident} />
           ) : tab === "parcels" ? (
-            <ParcelsScreen resident={resident} />
+            <ParcelsScreen key={resident.flat} resident={resident} />
           ) : (
             <MeScreen resident={resident} onUpdate={setResident} onForget={() => setResident(null)} />
           )}

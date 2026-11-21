@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { confirmThatWasMe, useWebcam, type Resident } from "@le-concierge/ui";
+import { useEffect, useState } from "react";
+import { confirmThatWasMe, registerResident, useWebcam, type Resident } from "@le-concierge/ui";
 
 export default function MeScreen({
   resident,
@@ -14,6 +14,18 @@ export default function MeScreen({
   const [status, setStatus] = useState<string | null>(null);
   const [name, setName] = useState(resident.name ?? "");
   const [whatsapp, setWhatsapp] = useState(resident.whatsapp ?? "");
+  const [flat, setFlat] = useState(resident.flat);
+
+  // Let go of the camera whenever the page is hidden, so the browser's camera
+  // light goes off; it is only asked for again when the resident taps for it.
+  const { stop: stopCamera } = camera;
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === "hidden") stopCamera();
+    };
+    document.addEventListener("visibilitychange", onHide);
+    return () => document.removeEventListener("visibilitychange", onHide);
+  }, [stopCamera]);
 
   async function enrol() {
     const shot = camera.shot ?? camera.capture();
@@ -71,17 +83,31 @@ export default function MeScreen({
         <h3>Add or correct a detail</h3>
         <form
           className="inline-form"
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault();
-            onUpdate({
+            const next: Resident = {
               ...resident,
               name: name.trim() || undefined,
               whatsapp: whatsapp.trim() || undefined,
               anonymous: !name.trim() && !whatsapp.trim() ? resident.anonymous : false,
-            });
+            };
+            const newFlat = flat.trim();
+            if (newFlat && newFlat !== resident.flat) {
+              // A new flat is a new resident record; the visit screen then
+              // subscribes to that flat instead.
+              const { id: _old, ...details } = next;
+              void _old;
+              onUpdate(await registerResident({ ...details, flat: newFlat }));
+            } else {
+              onUpdate(next);
+            }
             setStatus("Saved on this device.");
           }}
         >
+          <div className="field">
+            <label htmlFor="me-flat">Flat</label>
+            <input id="me-flat" value={flat} autoComplete="off" onChange={(event) => setFlat(event.target.value)} />
+          </div>
           <div className="field">
             <label htmlFor="me-name">Name</label>
             <input id="me-name" value={name} onChange={(event) => setName(event.target.value)} />
@@ -111,7 +137,14 @@ export default function MeScreen({
         </div>
         <div className="sign-actions">
           {camera.state !== "live" ? (
-            <button type="button" className="btn-quiet" onClick={() => void camera.start()}>
+            <button
+              type="button"
+              className="btn-quiet"
+              onClick={() => {
+                camera.reset();
+                void camera.start();
+              }}
+            >
               {camera.state === "asking" ? "asking for the camera…" : "Use the camera"}
             </button>
           ) : null}
@@ -120,10 +153,17 @@ export default function MeScreen({
               type="button"
               className="btn"
               onClick={() => {
+                // The portrait is taken; the camera is not needed any more.
                 camera.capture();
+                camera.stop();
               }}
             >
               Take the portrait
+            </button>
+          ) : null}
+          {camera.state === "live" ? (
+            <button type="button" className="btn-quiet" onClick={camera.stop}>
+              Close the camera
             </button>
           ) : null}
           {camera.shot ? (
