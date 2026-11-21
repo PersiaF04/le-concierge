@@ -93,13 +93,37 @@ async def post_visit(visit: dict[str, Any]) -> dict[str, Any]:
     return await api.post_visit(load_settings(), visit)
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=60), retry_policy_max_attempts=3)
+@workflows.activity(name="speak_reply", start_to_close_timeout=timedelta(seconds=60), retry_policy_max_attempts=3)
 async def speak_reply(reply: dict[str, Any]) -> dict[str, Any]:
-    """Voxtral text to speech, played at the door."""
+    """Voxtral text to speech, played at the door.
+
+    Returns the TTS facts (model, voice, audio_bytes) next to the playback
+    result, so an execution output shows whether Voxtral actually ran.
+    """
 
     settings = load_settings()
     audio = await mistral_ai.synthesize_reply(settings, reply["text"])
-    return await api.speak_at_intercom(settings, audio)
+    # The API attaches what was said to the right visit, so the resident's
+    # screen can show the speech facts of this execution and no other.
+    # The wav travels with the facts: the door plays Voxtral's own audio rather
+    # than a browser voice that only imitates it.
+    played = await api.speak_at_intercom(settings, {**audio, "visit_id": reply.get("visit_id")})
+    return {
+        "text": audio.get("text"),
+        "model": audio.get("model"),
+        "voice_id": audio.get("voice_id"),
+        # "realtime" when the audio arrived as deltas over the websocket,
+        # "batch" when the fallback answered. Never guessed.
+        "transport": audio.get("transport"),
+        "streaming_mode": audio.get("streaming_mode"),
+        "chunks": audio.get("chunks"),
+        "first_chunk_ms": audio.get("first_chunk_ms"),
+        "audio_bytes": audio.get("audio_bytes", 0),
+        "gain_db": audio.get("gain_db"),
+        "peak_dbfs": audio.get("peak_dbfs"),
+        "played": played.get("played"),
+        "duration_ms": played.get("duration_ms"),
+    }
 
 
 @workflows.activity(name="visitor_log_event", start_to_close_timeout=timedelta(seconds=30), retry_policy_max_attempts=5)
@@ -164,7 +188,12 @@ class VisitorArrivalWorkflow:
             "scene": scene,
             "transcript": transcript,
             "face_matched": bool(face.get("matched")),
+            # The phone shows these as they came back from the models, so the
+            # entry on the resident's screen is the execution's own numbers.
+            "face_distance": face.get("distance"),
+            "confidence": choice.get("confidence"),
             "proposed_reply": choice.get("reply_text", ""),
+            "parcel": choice.get("parcel"),
             "recognition": "face-api.js descriptor match, opted-in residents only",
         }
         await post_visit(visit)

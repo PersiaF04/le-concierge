@@ -1,0 +1,188 @@
+{
+ "status": "PASS",
+ "problems": [],
+ "directions": [
+  {
+   "name": "threshold",
+   "target": ".web-design/directions/threshold",
+   "concept": "Behaves like a door entryphone, because the project is about a threshold that is held shut or opened.",
+   "signature": "The snapshot and the countdown share one frame; the timer is a gap that closes along the frame edge.",
+   "references": [
+    "apple-iphone-17-pro-2026",
+    "superhuman-2019",
+    "increment-2019"
+   ],
+   "refTypes": [
+    "consumer-app",
+    "editorial"
+   ],
+   "tells": [
+    "mono-labels"
+   ],
+   "clusters": {
+    "saas-default": [],
+    "warm-editorial": [
+     "mono-labels"
+    ],
+    "dark-glow": []
+   },
+   "features": {
+    "head": "Sora",
+    "body": "Sora",
+    "headClass": "sans",
+    "bodyClass": "sans",
+    "groundL": 0.945,
+    "groundHue": 215,
+    "groundC": 0.006,
+    "temp": "neutral",
+    "dark": false,
+    "accentHue": 207,
+    "accent": "#006670",
+    "density": 223.76543209876542,
+    "media": 0,
+    "centred": false,
+    "h1ratio": 2.1176470588235294,
+    "cols": 1
+   },
+   "shots": {
+    "desktop": "C:\\Users\\persi\\vibe-work\\le-concierge-vibe\\.web-design\\directions\\threshold-1440.png",
+    "mobile": "C:\\Users\\persi\\vibe-work\\le-concierge-vibe\\.web-design\\directions\\threshold-390.png"
+   },
+   "assets": "Transcript, decision and face result from workflows/fixtures; latency from execution ebfce486; no photograph yet (shot list in DESIGN.md)"
+  },
+  {
+   "name": "logbook",
+   "target": ".web-design/directions/logbook",
+   "concept": "Behaves like the building's logbook, because a visitor is an entry that needs a signature before the door opens.",
+   "signature": "The live arrival is the next blank line in a ruled ledger, and answering stamps it in ink.",
+   "references": [
+    "stripe-docs-2019",
+    "pudding-2019",
+    "basecamp-2019"
+   ],
+   "refTypes": [
+    "dev-tool",
+    "editorial",
+    "saas"
+   ],
+   "tells": [
+    "mono-labels"
+   ],
+   "clusters": {
+    "saas-default": [],
+    "warm-editorial": [
+     "mono-labels"
+    ],
+    "dark-glow": []
+   },
+   "features": {
+    "head": "Instrument Sans",
+    "body": "Instrument Sans",
+    "headClass": "sans",
+    "bodyClass": "sans",
+    "groundL": 0.965,
+    "groundHue": 250,
+    "groundC": 0.005,
+    "temp": "neutral",
+    "dark": false,
+    "accentHue": 255,
+    "accent": "#305686",
+    "density": 486.8827160493827,
+    "media": 0,
+    "centred": false,
+    "h1ratio": 1.0625,
+    "cols": 6
+   },
+   "shots": {
+    "desktop": "C:\\Users\\persi\\vibe-work\\le-concierge-vibe\\.web-design\\directions\\logbook-1440.png",
+    "mobile": "C:\\Users\\persi\\vibe-work\\le-concierge-vibe\\.web-design\\directions\\logbook-390.png"
+   },
+   "assets": "Transcript, decision, parcel label from workflows/fixtures; measured latency from execution ebfce486"
+  },
+  {
+   "name": "switchboard",
+   "target": ".web-design/directions/switchboard",
+   "concept": "Behaves like a building switchboard, because each flat is a line and a visitor lights exactly one of them.",
+   "signature": "A measured latency spine: every activity of the running visit drawn to scale, ending in the pause where the workflow waits for the resident.",
+   "references": [
+    "resend-2026",
+    "verge-2019",
+    "robinhood-2018"
+   ],
+   "refTypes": [
+    "dev-tool",
+    "editorial",
+    "consumer-app"
+   ],
+   "tells": [
+    "mono-labels",
+    "tracked-eyebrows"
+   ],
+   "clusters": {
+    "saas-default": [],
+    "warm-editorial": [
+     "mono-labels",
+     "tracked-eyebrows"
+    ],
+    "dark-glow": []
+   },
+   "features": {
+    "head": "Archivo",
+    "body": "Archivo",
+    "headClass": "sans",
+    "bodyClass": "sans",
+    "groundL": 0.3,
+    "groundHue": 250,
+    "groundC": 0.014,
+    "temp": "neutral",
+    "dark": true,
+    "accentHue": 75,
+    "accent": "#efac44",
+    "density": 699.8456790123456,
+    "media": 0,
+    "centred": false,
+    "h1ratio": 1.103448275862069,
+    "cols": 7
+   },
+   "shots": {
+    "desktop": "C:\\Users\\persi\\vibe-work\\le-concierge-vibe\\.web-design\\directions\\switchboard-1440.png",
+    "mobile": "C:\\Users\\persi\\vibe-work\\le-concierge-vibe\\.web-design\\directions\\switchboard-390.png"
+   },
+   "assets": "Activity timings, transcript, decision from execution ebfce486 (Studio); parcel label from fixtures"
+  }
+ ],
+ "pairs": [
+  {
+   "a": "threshold",
+   "b": "logbook",
+   "type": 0.75,
+   "colour": 0.06,
+   "density": 0.31,
+   "layout": 0.41,
+   "overall": 0.39
+  },
+  {
+   "a": "threshold",
+   "b": "switchboard",
+   "type": 0.75,
+   "colour": 0.75,
+   "density": 0.46,
+   "layout": 0.4,
+   "overall": 0.62
+  },
+  {
+   "a": "logbook",
+   "b": "switchboard",
+   "type": 0.75,
+   "colour": 0.8,
+   "density": 0.15,
+   "layout": 0.15,
+   "overall": 0.53
+  }
+ ],
+ "recommendation": {
+  "name": "threshold",
+  "why": "fewest cluster tells (1) and furthest from the others (min distance 0.39)"
+ },
+ "sheet": "C:\\Users\\persi\\vibe-work\\le-concierge-vibe\\.web-design\\directions\\sheet.jpg"
+}

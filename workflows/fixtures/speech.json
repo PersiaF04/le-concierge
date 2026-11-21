@@ -1,4 +1,16 @@
 {
   "text": "Come in, 12. The door is open.",
-  "audio_base64": ""
+  "model": "voxtral-mini-tts-3-0-13",
+  "voice_id": "voice_447",
+  "transport": "realtime",
+  "streaming_mode": "responsive",
+  "response_format": "wav",
+  "chunks": 5,
+  "first_chunk_ms": 1004,
+  "audio_base64": "",
+  "audio_bytes": 96044,
+  "normalised": true,
+  "peak_dbfs_before": -7.1,
+  "peak_dbfs": -1,
+  "gain_db": 6.1
 }

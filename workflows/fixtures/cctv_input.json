@@ -1,0 +1,21 @@
+{
+  "camera": "entrance",
+  "started_at": "2026-11-21T14:02:10Z",
+  "ended_at": "2026-11-21T14:02:31Z",
+  "frames": [
+    "https://example.invalid/cctv/entrance/1402-01.jpg",
+    "https://example.invalid/cctv/entrance/1402-02.jpg",
+    "https://example.invalid/cctv/entrance/1402-03.jpg"
+  ],
+  "clip_url": "https://example.invalid/cctv/entrance/1402.webm",
+  "known_people": [
+    {
+      "name": "Rob Finean",
+      "resident_id": "res_4_rob",
+      "description": "Tall, glasses, usually a navy rain jacket and grey beanie"
+    }
+  ],
+  "recent_events": [
+    "Unknown person 4 rang a doorbell, waited 50s and went away again"
+  ]
+}

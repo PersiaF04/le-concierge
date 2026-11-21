@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Le Concierge — threshold</title>
+<meta name="design-concept" content="Behaves like a door entryphone, because the project is about a threshold that is held shut or opened.">
+<meta name="design-signature" content="The snapshot and the countdown share one frame; the timer is a gap that closes along the frame edge.">
+<meta name="design-references" content="apple-iphone-17-pro-2026, superhuman-2019, increment-2019">
+<meta name="design-assets" content="Transcript, decision and face result from workflows/fixtures; latency from execution ebfce486; no photograph yet (shot list in DESIGN.md)">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ground: oklch(0.945 0.006 215);
+    --ink: oklch(0.22 0.02 230);
+    --ink-2: oklch(0.46 0.015 230);
+    --rule: oklch(0.85 0.008 215);
+    --accent: oklch(0.46 0.09 205);
+    --on-accent: oklch(0.99 0.005 205);
+    --radius: 2px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: Sora, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .screen {
+    max-width: 27rem;
+    margin: 0 auto;
+    padding: 1.5rem 1.25rem 2rem;
+    display: grid;
+    gap: 1.75rem;
+  }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+  .flat { font-size: 0.78rem; color: var(--ink-2); }
+  .live { font-family: "IBM Plex Mono", monospace; font-size: 0.75rem; color: var(--accent); }
+  .live::before { content: "●"; margin-right: 0.4em; font-size: 0.6em; vertical-align: 0.15em; }
+
+  h1 {
+    font-size: clamp(1.75rem, 6vw, 2.25rem);
+    line-height: 1.1;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  h1 em { font-style: normal; font-weight: 600; }
+
+  /* the frame: snapshot + closing gap */
+  .frame {
+    position: relative;
+    aspect-ratio: 4 / 5;
+    background: oklch(0.9 0.006 215);
+    border: 1px solid var(--ink);
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+  }
+  .frame::before {
+    content: "";
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(
+      135deg,
+      oklch(0.9 0.006 215) 0 7px,
+      oklch(0.88 0.007 215) 7px 14px
+    );
+  }
+  .frame-note {
+    position: relative;
+    font-family: Sora, system-ui, sans-serif;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: var(--ink-2);
+    text-align: center;
+    padding: 0 2rem;
+  }
+  .frame-note strong { display: block; color: var(--ink); font-weight: 500; }
+  .meta {
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    display: flex; justify-content: space-between;
+    padding: 0.5rem 0.6rem;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.65rem;
+    color: var(--ink-2);
+    background: linear-gradient(var(--ground), transparent);
+  }
+  /* the gap that closes */
+  .gap {
+    position: absolute;
+    left: 0; bottom: 0;
+    height: 6px;
+    width: var(--left, 47%);
+    background: var(--accent);
+  }
+  .gap-label {
+    position: absolute;
+    bottom: 0.6rem; left: 0.6rem;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.65rem;
+    color: var(--ink);
+    background: var(--ground);
+    padding: 0.15rem 0.3rem;
+  }
+
+  .said { display: grid; gap: 0.4rem; }
+  .said .label { font-size: 0.8rem; color: var(--ink-2); }
+  blockquote {
+    margin: 0;
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    max-width: 34ch;
+  }
+
+  .actions { display: grid; gap: 0.75rem; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: var(--radius);
+  }
+  .approve {
+    padding: 1rem 1.25rem;
+    background: var(--accent);
+    color: var(--on-accent);
+    border: 1px solid var(--accent);
+    font-weight: 500;
+    font-size: 1.0625rem;
+    display: flex; justify-content: space-between; align-items: center;
+    transition: transform 140ms ease-out, background 160ms ease-out;
+  }
+  .approve:hover { background: oklch(0.41 0.09 205); }
+  .approve:active { transform: scale(0.985); }
+  .approve kbd {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.7rem;
+    opacity: 0.75;
+    border: 1px solid currentColor;
+    border-radius: 2px;
+    padding: 0.1rem 0.3rem;
+  }
+  .decline {
+    padding: 0.85rem 1.25rem;
+    background: none;
+    border: 1px solid var(--rule);
+    color: var(--ink);
+  }
+  .decline:hover { border-color: var(--ink); }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+  footer {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.68rem;
+    color: var(--ink-2);
+    line-height: 1.7;
+    border-top: 1px solid var(--rule);
+    padding-top: 0.9rem;
+  }
+</style>
+</head>
+<body>
+<main class="screen">
+  <header>
+    <span class="flat">Flat 12 · entryphone</span>
+    <span class="live">at the door</span>
+  </header>
+
+  <h1>Someone is at your door, <em>and they have a parcel.</em></h1>
+
+  <div class="frame">
+    <div class="meta"><span>14:32:07</span><span>flat 12</span></div>
+    <p class="frame-note">
+      <strong>No camera on this run</strong>
+      replay frame · snapshot arrives from the intercom
+    </p>
+    <span class="gap" style="--left: 47%"></span>
+    <span class="gap-label">door stays shut in 28s</span>
+  </div>
+
+  <div class="said">
+    <span class="label">What they said</span>
+    <blockquote>“Hello, it's the delivery for flat twelve, I have a parcel for Persia.”</blockquote>
+  </div>
+
+  <div class="actions">
+    <button class="approve" type="button">
+      Approve and open
+      <kbd>hold</kbd>
+    </button>
+    <button class="decline" type="button">Decline, keep it shut</button>
+  </div>
+
+  <footer>
+    Face matched · distance 0.31 · face-api.js<br>
+    Le Chonk decided flat 12 · confidence 0.86<br>
+    Reply will be spoken: “Come in, 12. The door is open.”
+  </footer>
+</main>
+</body>
+</html>

@@ -21,7 +21,7 @@ from mistralai.client import Mistral  # noqa: E402
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("workflow", help="visitor-arrival, parcel-arrival or nightly-digest")
+    parser.add_argument("workflow", help="visitor-arrival, parcel-arrival, nightly-digest or cctv-event")
     parser.add_argument("--input", default=None, help="path to a JSON input file")
     parser.add_argument("--timeout", type=float, default=180.0)
     args = parser.parse_args()
