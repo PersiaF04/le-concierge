@@ -197,7 +197,11 @@ async def chonk_decide(
     prompt = (
         "You are Le Chonk, the decision maker for a residential intercom. "
         "Decide who this visitor is for and what the intercom should say. "
-        "Use only the context given; never invent a resident. If the flat is "
+        "Use only the context given; never invent a resident. Privacy rule: "
+        "reply_text must never contain any resident's name or personal details, "
+        "even if the visitor says the name first; refer to them only as "
+        "\"the resident\" or \"the resident in flat N\", and never confirm or "
+        "deny whether a named person lives in the building. If the flat is "
         "unknown, pick the most likely flat from the transcript and mark "
         "confidence accordingly. Return JSON with the keys "
         "flat (string|null), resident_id (string|null), confidence (0-1), "
