@@ -5,15 +5,18 @@ import {
   confidenceLabel,
   distanceLabel,
   fetchCurrentVisit,
+  fetchSnapshot,
   formatTime,
   msLabel,
   openLive,
+  publishSnapshot,
   recordedSpeech,
   recordedVisit,
   speechAudioUrl,
   startArrival,
   useTheme,
   useWebcam,
+  type Snapshot,
   type Visit,
 } from "@le-concierge/ui";
 import Face, { gazeFrom } from "../components/Face";
@@ -31,6 +34,8 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
   const said = visit.speech?.text ?? visit.reply;
   const [live, setLive] = useState<"off" | "connecting" | "on">(apiMode === "live" ? "connecting" : "off");
   const [starting, setStarting] = useState(false);
+  /** The photograph flat 12 just took on its phone, pushed over the socket. */
+  const [phoneShot, setPhoneShot] = useState<Snapshot | null>(null);
   const [speaking, setSpeaking] = useState(false);
   const [spoken, setSpoken] = useState(false);
   const [shot, setShot] = useState<string | null>(() => loadDoorShot());
@@ -71,12 +76,23 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
       if (!open || current.id === recordedVisit.id) return;
       setVisit(current);
     });
-    const socket = openLive("12", (next) => {
-      if (!open) return;
-      setLive("on");
-      setSpoken(false);
-      setVisit({ ...next, mode: "workflow" });
+    void fetchSnapshot("12").then((snapshot) => {
+      if (open && snapshot) setPhoneShot(snapshot);
     });
+    const socket = openLive(
+      "12",
+      (next) => {
+        if (!open) return;
+        setLive("on");
+        setSpoken(false);
+        setVisit({ ...next, mode: "workflow" });
+      },
+      // A photograph from the phone lands here and stops: the door shows it
+      // without taking one of its own.
+      (snapshot) => {
+        if (open) setPhoneShot(snapshot);
+      },
+    );
     if (socket.transport === "none") setLive("off");
     else setLive("on");
     return () => {
@@ -194,10 +210,15 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
     }
     setShot(data);
     saveDoorShot(data);
-    setNotice(null);
+    // The same channel, the other way: flat 12 sees who is standing here.
+    void publishSnapshot({ flat: "12", dataUrl: data, source: "door" }).then((stored) => {
+      setNotice(stored ? "Sent to flat 12's phone." : null);
+    });
   }
 
   const speech = visit.speech ?? recordedSpeech;
+  const photo = phoneShot?.dataUrl ?? shot;
+  const photoBy = phoneShot ? `flat 12's phone · ${formatTime(phoneShot.at)}` : shot ? "photographed just now" : null;
 
   return (
     <div className="kiosk" onPointerMove={(event) => setGaze(gazeFrom(event))}>
@@ -288,8 +309,8 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
 
       <footer className="kiosk-foot">
         <figure className="door-plate">
-          {shot ? (
-            <img src={shot} alt="The visitor as this camera sees them" />
+          {photo ? (
+            <img src={photo} alt="The visitor, as the building last saw them" />
           ) : camera.state === "live" ? (
             <video className="door-video" ref={camera.attach} muted playsInline />
           ) : (
@@ -298,16 +319,21 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
             </div>
           )}
           <figcaption className="mono small muted">
-            {shot ? "photographed just now" : "this laptop's camera stands in for the intercom"}
+            {photoBy ?? "this laptop's camera stands in for the intercom"}
           </figcaption>
         </figure>
 
         <div className="foot-cam">
           <div className="foot-cam-actions">
             {camera.state === "live" ? (
-              <button type="button" className="btn-quiet" onClick={takePhoto}>
-                Take the photograph
-              </button>
+              <>
+                <button type="button" className="btn-quiet" onClick={takePhoto}>
+                  Take the photograph
+                </button>
+                <button type="button" className="btn-quiet" onClick={camera.stop}>
+                  Close the camera
+                </button>
+              </>
             ) : (
               <button type="button" className="btn-quiet" onClick={() => void camera.start()}>
                 {camera.state === "asking" ? "asking for the camera…" : "Open the camera"}
@@ -318,7 +344,7 @@ export default function DoorScreen({ onOpenLedger }: { onOpenLedger: () => void 
           {camera.state === "denied" || camera.state === "unsupported" ? (
             <p className="small muted">
               {camera.state === "denied"
-                ? "Camera refused. The door still speaks; there is just no photograph."
+                ? `Camera refused${camera.error ? ` (${camera.error})` : ""}. The door still speaks; there is just no photograph.`
                 : "No camera in this browser. The door still speaks."}
             </p>
           ) : null}

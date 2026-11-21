@@ -67,7 +67,15 @@ export function useWebcam() {
     setError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 960 }, facingMode: "environment" },
+        // "ideal", not "exact": a laptop has no rear camera, and an exact
+        // constraint makes Chrome fail the whole request with "Requested
+        // device not found" — which is what a phone-first demo never saw and a
+        // laptop always did. On a phone the rear camera is still preferred.
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 960 },
+          facingMode: { ideal: "environment" },
+        },
         audio: false,
       });
       streamRef.current = stream;
@@ -77,6 +85,28 @@ export function useWebcam() {
       sink.srcObject = stream;
       sinkRef.current = sink;
       await sink.play().catch(() => {});
+      // Wait for a decoded frame before calling it live: a capture pressed the
+      // instant the button appears would otherwise draw a black rectangle.
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        };
+        const withFrame = sink as HTMLVideoElement & {
+          requestVideoFrameCallback?: (callback: () => void) => number;
+        };
+        if (typeof withFrame.requestVideoFrameCallback === "function") {
+          withFrame.requestVideoFrameCallback(finish);
+        } else if (sink.readyState >= 2) {
+          finish();
+        } else {
+          sink.addEventListener("loadeddata", finish, { once: true });
+        }
+        // A camera that never delivers a frame must not hang the button.
+        setTimeout(finish, 1500);
+      });
       setState("live");
     } catch (cause) {
       setState("denied");
@@ -86,7 +116,8 @@ export function useWebcam() {
 
   const capture = useCallback((): string | null => {
     const video = sinkRef.current;
-    if (!video || !video.videoWidth) return null;
+    // readyState 2 is HAVE_CURRENT_DATA: without it the canvas would be black.
+    if (!video || !video.videoWidth || video.readyState < 2) return null;
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;

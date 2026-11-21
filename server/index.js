@@ -47,6 +47,8 @@ const parcels = [];
 const clients = new Set();
 /** @type {Map<string, Buffer>} visit_id -> the wav Voxtral streamed for it */
 const audioBlobs = new Map();
+/** @type {Map<string, object>} flat -> the last photograph either surface sent */
+const snapshots = new Map();
 
 // ============================================================================
 // Helpers
@@ -59,6 +61,16 @@ function newVisitId() {
 }
 
 /** Push a visit to every resident watching that flat (and to the log). */
+function broadcastSnapshot(snapshot) {
+  const frame = JSON.stringify({ type: 'snapshot', snapshot });
+  for (const socket of clients) {
+    if (!socket.isAlive) continue;
+    const flat = socket.flat;
+    if (flat && snapshot.flat && String(flat) !== String(snapshot.flat)) continue;
+    if (socket.readyState === Socket.OPEN) socket.send(frame);
+  }
+}
+
 function broadcast(visit) {
   const frame = JSON.stringify({ type: 'visit', visit });
   for (const socket of clients) {
@@ -162,6 +174,7 @@ app.get('/health', (req, res) => {
     workflow: WORKFLOW_NAME,
     key: MISTRAL_API_KEY ? 'set' : 'missing',
     visits: visits.size,
+    snapshots: snapshots.size,
   });
 });
 
@@ -377,6 +390,44 @@ app.get('/intercom/audio/:file', (req, res) => {
   res.setHeader('content-type', 'audio/wav');
   res.setHeader('cache-control', 'no-store');
   res.send(wav);
+});
+
+// ── photographs, either direction ───────────────────────────────────────────
+
+/**
+ * The phone (and the door) publish the picture they just took. The API keeps
+ * the last one per flat and pushes it straight out over /live, so the other
+ * surface shows it without asking: that is the whole point of the channel.
+ */
+app.post('/snapshots', (req, res) => {
+  const body = req.body || {};
+  const flat = body.flat ? String(body.flat) : null;
+  const dataUrl = typeof body.dataUrl === 'string' ? body.dataUrl : body.data_url;
+  if (!flat) return res.status(400).json({ error: 'flat is required' });
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+    return res.status(400).json({ error: 'dataUrl must be a data:image URL' });
+  }
+
+  const snapshot = {
+    flat,
+    dataUrl,
+    // Who took it, in the apps' words: "resident-phone" or "door".
+    source: body.source === 'door' ? 'door' : 'resident-phone',
+    by: body.by ?? null,
+    at: nowIso(),
+    bytes: Math.round((dataUrl.length * 3) / 4),
+  };
+  snapshots.set(flat, snapshot);
+  events.push({ type: 'snapshot.taken', flat, source: snapshot.source, at: snapshot.at });
+  broadcastSnapshot(snapshot);
+  res.status(201).json({ stored: true, snapshot: { ...snapshot, dataUrl: undefined } });
+});
+
+app.get('/snapshots', (req, res) => {
+  const flat = req.query.flat ? String(req.query.flat) : null;
+  const snapshot = flat ? snapshots.get(flat) : null;
+  if (!snapshot) return res.status(404).json({ error: 'no photograph for that flat yet' });
+  res.json(snapshot);
 });
 
 app.get('/presence', (req, res) => {

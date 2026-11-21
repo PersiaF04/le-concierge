@@ -6,10 +6,37 @@
  * a visit says which of the two answered, and the UI says so out loud.
  */
 
-import type { Decision, Parcel, Resident, SpeechReport, Visit } from "./types";
+import type { Decision, Parcel, Resident, Snapshot, SpeechReport, Visit } from "./types";
 
-const API = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "") ?? "";
-const WS = (import.meta.env.VITE_WS_URL as string | undefined)?.replace(/\/$/, "") ?? "";
+/**
+ * Where the API is, in order of who gets the last word:
+ *
+ * 1. `?api=https://…` on the URL — so a deployed build can be pointed at a
+ *    tunnel or a VPS without being rebuilt (the badge says "live" immediately);
+ * 2. `le-concierge:api` in localStorage — the same choice, remembered;
+ * 3. `VITE_API_URL` at build time — what the dev servers and CI use.
+ */
+const STORED_API_KEY = "le-concierge:api";
+
+function resolveApi(): string {
+  const configured = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+  try {
+    const fromQuery = new URLSearchParams(window.location.search).get("api");
+    if (fromQuery) {
+      window.localStorage.setItem(STORED_API_KEY, fromQuery);
+      return fromQuery;
+    }
+    return window.localStorage.getItem(STORED_API_KEY) ?? configured;
+  } catch {
+    return configured;
+  }
+}
+
+const API = resolveApi().replace(/\/$/, "");
+/** Without an explicit socket URL, the API's own origin carries the socket. */
+const WS =
+  (import.meta.env.VITE_WS_URL as string | undefined)?.replace(/\/$/, "") ||
+  (API ? API.replace(/^http/, "ws") : "");
 
 export const apiMode: "live" | "recorded" = API ? "live" : "recorded";
 
@@ -107,6 +134,32 @@ export async function startArrival(input: {
   return created ? { visitId: created.visit_id, executionId: created.execution_id } : null;
 }
 
+/**
+ * Send a photograph to the building. The API pushes it to the other surface
+ * over /live, so the door shows what the phone just took, and vice versa.
+ */
+export async function publishSnapshot(input: {
+  flat: string;
+  dataUrl: string;
+  source?: "resident-phone" | "door";
+  by?: string | null;
+}): Promise<boolean> {
+  const response = await json<{ stored: boolean }>("/snapshots", {
+    method: "POST",
+    body: JSON.stringify({
+      flat: input.flat,
+      dataUrl: input.dataUrl,
+      source: input.source ?? "resident-phone",
+      by: input.by ?? null,
+    }),
+  });
+  return Boolean(response?.stored);
+}
+
+export async function fetchSnapshot(flat: string): Promise<Snapshot | null> {
+  return json<Snapshot>(`/snapshots?flat=${encodeURIComponent(flat)}`);
+}
+
 export async function sendDecision(visitId: string, decision: Decision): Promise<boolean> {
   const response = await json<{ ok: boolean }>(`/visits/${visitId}/decision`, {
     method: "POST",
@@ -140,6 +193,7 @@ export async function confirmThatWasMe(residentId: string): Promise<boolean> {
 export function openLive(
   flat: string,
   onEvent: (visit: Visit) => void,
+  onSnapshot?: (snapshot: Snapshot) => void,
 ): { close: () => void; transport: "ws" | "none" } {
   if (!WS) return { close: () => {}, transport: "none" };
   let socket: WebSocket | null = null;
@@ -151,9 +205,17 @@ export function openLive(
     socket = new WebSocket(`${WS}/live?flat=${encodeURIComponent(flat)}`);
     socket.onmessage = (event) => {
       try {
-        // The API frames every push as { type: "visit", visit }; a bare visit
+        // The API frames every push as { type, visit | snapshot }; a bare visit
         // is still accepted so the two can change shape independently.
-        const frame = JSON.parse(event.data) as { type?: string; visit?: Visit };
+        const frame = JSON.parse(event.data) as {
+          type?: string;
+          visit?: Visit;
+          snapshot?: Snapshot;
+        };
+        if (frame.type === "snapshot" || frame.snapshot) {
+          if (frame.snapshot?.dataUrl) onSnapshot?.(frame.snapshot);
+          return;
+        }
         const visit = frame.visit ?? (frame as unknown as Visit);
         if (!visit?.id) return;
         onEvent(visit);

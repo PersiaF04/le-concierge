@@ -54,6 +54,17 @@ export interface VisitSpeech {
   at?: string;
 }
 
+export interface Snapshot {
+  flat: string;
+  /** The picture itself, as a data: URL. */
+  dataUrl: string;
+  /** "resident-phone" when the flat sent it, "door" when the doorstep did. */
+  source: "resident-phone" | "door";
+  by?: string | null;
+  at: string;
+  bytes?: number;
+}
+
 export interface Parcel {
   id: string;
   flat: string;

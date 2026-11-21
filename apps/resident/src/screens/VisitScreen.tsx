@@ -5,8 +5,10 @@ import {
   confirmThatWasMe,
   distanceLabel,
   fetchCurrentVisit,
+  fetchSnapshot,
   formatTime,
   openLive,
+  publishSnapshot,
   secondsLabel,
   sendDecision,
   stampFor,
@@ -14,6 +16,7 @@ import {
   useWebcam,
   type Decision,
   type Resident,
+  type Snapshot,
   type Visit,
 } from "@le-concierge/ui";
 
@@ -23,6 +26,8 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [remote, setRemote] = useState<"ws" | "none">("none");
   const [remembered, setRemembered] = useState(false);
+  /** The last photograph either surface took, pushed over the socket. */
+  const [remoteShot, setRemoteShot] = useState<Snapshot | null>(null);
   const camera = useWebcam();
 
   useEffect(() => {
@@ -30,7 +35,14 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
     void fetchCurrentVisit(resident.flat).then((next) => {
       if (alive) setVisit(next);
     });
-    const link = openLive(resident.flat, (next) => setVisit(next));
+    void fetchSnapshot(resident.flat).then((shot) => {
+      if (alive && shot) setRemoteShot(shot);
+    });
+    const link = openLive(
+      resident.flat,
+      (next) => setVisit(next),
+      (shot) => setRemoteShot(shot),
+    );
     setRemote(link.transport);
     return () => {
       alive = false;
@@ -75,7 +87,40 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
     );
   }
 
-  const snapshot = camera.shot ?? visit.snapshot ?? null;
+  const snapshot = camera.shot ?? remoteShot?.dataUrl ?? visit.snapshot ?? null;
+  const shotBy = camera.shot
+    ? "taken on this phone"
+    : remoteShot?.source === "door"
+      ? "taken at the doorstep"
+      : remoteShot?.source === "resident-phone"
+        ? "taken on this phone"
+        : visit.snapshot
+          ? "the intercom"
+          : "—";
+
+  /**
+   * The photograph, both ways: it stays here, and it goes to the API, which
+   * pushes it to the door over the same socket that carries the visit. That is
+   * why the concierge shows it the moment this button is pressed.
+   */
+  async function takePhoto() {
+    const data = camera.capture();
+    if (!data) {
+      setNotice("No frame yet — the camera needs a second to open.");
+      return;
+    }
+    const stored = await publishSnapshot({
+      flat: resident.flat,
+      dataUrl: data,
+      source: "resident-phone",
+      by: resident.name,
+    });
+    setNotice(
+      stored
+        ? "Sent to the door. The concierge is looking at it now."
+        : "Kept on this phone only: the API did not take the photograph.",
+    );
+  }
 
   async function remember() {
     if (!visit) return;
@@ -190,21 +235,29 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
           )}
           <figcaption className="record-line">
             <span>the door, {formatTime(visit.at)}</span>
-            <span>{snapshot ? (camera.shot ? "this device" : "intercom") : "—"}</span>
+            <span>{shotBy}</span>
           </figcaption>
         </figure>
 
-        {!snapshot ? (
-          camera.state === "live" ? (
-            <button type="button" className="btn-quiet full" onClick={() => camera.capture()}>
-              Take the photograph
+        {camera.state === "live" ? (
+          <div className="sign-actions">
+            <button type="button" className="btn-quiet" onClick={() => void takePhoto()}>
+              {snapshot ? "Take another photograph" : "Take the photograph"}
             </button>
-          ) : (
-            <button type="button" className="btn-quiet full" onClick={() => void camera.start()}>
-              {camera.state === "asking" ? "asking for the camera…" : "Use this laptop's camera instead"}
+            {/* One camera, one app: let go of the device rather than hold it. */}
+            <button type="button" className="btn-quiet" onClick={camera.stop}>
+              Close the camera
             </button>
-          )
-        ) : null}
+          </div>
+        ) : (
+          <button type="button" className="btn-quiet full" onClick={() => void camera.start()}>
+            {camera.state === "asking"
+              ? "asking for the camera…"
+              : snapshot
+                ? "Use this phone's camera again"
+                : "Use this laptop's camera instead"}
+          </button>
+        )}
 
         {camera.state === "live" ? (
           <video className="camera-preview" ref={camera.attach} muted playsInline />
@@ -213,7 +266,7 @@ export default function VisitScreen({ resident }: { resident: Resident }) {
         {camera.state === "denied" || camera.state === "unsupported" ? (
           <p className="small muted">
             {camera.state === "denied"
-              ? "Camera refused. The log still works; you will just not see who is standing there."
+              ? `Camera refused${camera.error ? ` (${camera.error})` : ""}. The log still works; you will just not see who is standing there.`
               : "This browser has no camera access. The log still works without a photograph."}
           </p>
         ) : null}
