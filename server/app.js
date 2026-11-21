@@ -3,7 +3,8 @@
  *
  * The bridge between the workflows worker and the two apps:
  *
- *   POST /arrivals              start a visitor-arrival execution
+ *   POST /arrivals              start a visitor-arrival execution (422 for an unknown or empty flat)
+ *   GET  /flats/:flat           does the building have this flat, and is anyone registered there
  *   POST /parcels               start a parcel-arrival execution
  *   POST /visits                worker -> store the visit, push it to /live
  *   POST /visits/:id/decision   app -> answer the door, signal the execution
@@ -51,7 +52,38 @@ export function configFromEnv(env = process.env) {
     visitTtlSeconds: Number(env.VISIT_TTL_SECONDS || 300),
     retryBaseMs: Number(env.MISTRAL_RETRY_BASE_MS || 600),
     voice: voiceConfigFromEnv(env),
+    buildingFlats: parseFlats(env.BUILDING_FLATS || '1-20'),
   };
+}
+
+/** A flat as the building writes it: trimmed, upper case, no leading zeros. */
+export function normalizeFlat(flat) {
+  const text = String(flat).trim().toUpperCase();
+  return /^\d+$/.test(text) ? String(Number(text)) : text;
+}
+
+/** The building's flats from `BUILDING_FLATS`: ranges and names, e.g. "1-20,PH". */
+export function parseFlats(spec) {
+  const flats = new Set();
+  for (const part of String(spec).split(',')) {
+    const token = part.trim();
+    if (!token) continue;
+    const range = /^(\d+)\s*-\s*(\d+)$/.exec(token);
+    if (range) {
+      const [from, to] = [Number(range[1]), Number(range[2])].sort((a, b) => a - b);
+      for (let n = from; n <= to; n += 1) flats.add(String(n));
+    } else {
+      flats.add(normalizeFlat(token));
+    }
+  }
+  return flats;
+}
+
+/** What the door says when it cannot ring a flat. */
+export function flatRefusal(error, flat) {
+  return error === 'no_such_flat'
+    ? `I'm sorry, there is no flat ${flat} in this building. Could you check the number?`
+    : `I'm sorry, there is nobody registered at flat ${flat}, so I can't reach them.`;
 }
 
 const nowIso = () => new Date().toISOString();
@@ -152,6 +184,15 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
   const parse = (row) => (row ? JSON.parse(row.doc) : null);
   const getVisit = (id) => parse(sql.getVisit.get(id));
   const getResident = (id) => parse(sql.getResident.get(id));
+
+  /** Is the flat in the building, and is anyone registered there? */
+  const flatStatus = (flat) => {
+    const name = normalizeFlat(flat);
+    const exists = (config.buildingFlats ?? parseFlats('1-20')).has(name);
+    const hasResident =
+      exists && (sql.residentsInFlat.all(name).length > 0 || sql.residentsInFlat.all(String(flat).trim()).length > 0);
+    return { exists, hasResident };
+  };
 
   function saveVisit(visit) {
     sql.putVisit.run(
@@ -358,9 +399,22 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
 
   // ── the door starts a visit ───────────────────────────────────────────────
 
+  app.get('/flats/:flat', (req, res) => {
+    res.json(flatStatus(req.params.flat));
+  });
+
   app.post('/arrivals', async (req, res) => {
     const body = req.body || {};
     const flat = str(body.flat);
+    // A named flat must exist and have someone to ring; no flat lets the workflow decide.
+    if (flat !== null) {
+      const { exists, hasResident } = flatStatus(flat);
+      if (!exists || !hasResident) {
+        const error = exists ? 'no_resident' : 'no_such_flat';
+        logEvent({ type: 'visit.refused', flat, reason: error });
+        return res.status(422).json({ error, flat, reply: flatRefusal(error, flat) });
+      }
+    }
     const visit = saveVisit({
       id: str(body.visit_id) || newId('visit'),
       flat,
