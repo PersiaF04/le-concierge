@@ -99,10 +99,12 @@ names the model: it is what tells a real model call from a fixture.
 | `WORKFLOWS_REPLAY` | `0` | `1` runs every activity from the recorded fixtures |
 | `WORKFLOWS_RECORD` | `0` | `1` writes real activity results into `fixtures/` |
 | `WORKFLOWS_FIXTURES_DIR` | `./fixtures` | Where the recordings live |
-| `VISION_MODEL` | `pixtral-large-latest` | Describes the door, reads parcel labels |
+| `VISION_MODEL` | `mistral-small-latest` | Describes the door, reads parcel labels (vision-capable) |
 | `TRANSCRIPTION_MODEL` | `voxtral-mini-latest` | Intercom speech to text |
 | `DECISION_MODEL` | `mistral-large-latest` | Le Chonk |
-| `SPEECH_MODEL` | `voxtral-mini-tts-latest` | The reply spoken at the door |
+| `SPEECH_MODEL` | `voxtral-mini-tts-3-0` | The reply spoken at the door |
+| `SPEECH_VOICE_ID` | `gb_jane_neutral` | The voice the door speaks in |
+| `SPEECH_REALTIME` | `1` | `1` streams the reply over Voxtral's realtime endpoint, `0` uses the batch endpoint |
 | `VISITOR_DECISION_TIMEOUT_SECONDS` | `60` | How long the visitor flow waits |
 
 ## Tests

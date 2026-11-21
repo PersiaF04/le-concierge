@@ -93,3 +93,19 @@ $RECYCLE.BIN/
 
 # Local config
 local.env
+
+# Design work in progress: rendered screenshots stay local
+.web-design/shots/
+.web-design/app-shots/
+.web-design/directions/*.png
+.web-design/directions/*.jpg
+
+# local TypeScript build caches
+*.tsbuildinfo
+
+# the live-loop driver talks to a machine-local browser install
+# .web-design/*.mjs (the drivers talk to a machine-local browser install)
+
+# local staging copies of dist/ for the Vercel deploys
+.deploy/
+.web-design/*.mjs

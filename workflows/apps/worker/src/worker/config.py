@@ -38,6 +38,8 @@ class Settings:
     decision_model: str
     speech_model: str
     speech_voice_id: str
+    speech_realtime: bool
+    speech_target_peak_dbfs: float
     decision_timeout_seconds: float
     replay: bool
     fixtures_dir: Path
@@ -59,11 +61,18 @@ def load_settings() -> Settings:
     return Settings(
         api_base_url=os.getenv("LE_CONCIERGE_API_URL", "http://localhost:3000").rstrip("/"),
         mistral_api_key=os.getenv("MISTRAL_API_KEY") or None,
-        vision_model=os.getenv("VISION_MODEL", "pixtral-large-latest"),
+        vision_model=os.getenv("VISION_MODEL", "mistral-small-latest"),
         transcription_model=os.getenv("TRANSCRIPTION_MODEL", "voxtral-mini-latest"),
         decision_model=os.getenv("DECISION_MODEL", "mistral-large-latest"),
-        speech_model=os.getenv("SPEECH_MODEL", "voxtral-mini-tts-latest"),
+        # The door speaks through Voxtral's realtime endpoint, so the audio
+        # arrives in deltas while the sentence is still being generated.
+        speech_model=os.getenv("SPEECH_MODEL", "voxtral-mini-tts-3-0"),
         speech_voice_id=os.getenv("SPEECH_VOICE_ID", "gb_jane_neutral"),
+        speech_realtime=_flag("SPEECH_REALTIME", "1"),
+        # Voxtral hands back a wav peaking around -8 dBFS, which is quiet on an
+        # intercom. The audio is peak-normalised to this ceiling before anyone
+        # hears it; -1 leaves a decibel of headroom so nothing clips.
+        speech_target_peak_dbfs=float(os.getenv("SPEECH_TARGET_PEAK_DBFS", "-1.0")),
         decision_timeout_seconds=float(
             os.getenv("VISITOR_DECISION_TIMEOUT_SECONDS", str(DEFAULT_DECISION_TIMEOUT_SECONDS))
         ),

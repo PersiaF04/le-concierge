@@ -31,6 +31,15 @@ Le Concierge is a smart intercom system that:
 
 ## Demo
 
+The two web apps are deployed in recorded-run mode:
+
+- the phone: https://le-concierge-resident.vercel.app
+- the door and the log: https://le-concierge-concierge.vercel.app
+
+See [docs/deploy.md](docs/deploy.md) for what is deployed, how it was deployed,
+and why the API and the worker cannot live on Vercel next to them.
+
+
 Watch a resident receive a visitor notification, see the live photo, hear the audio, and approve access — all from their phone. The system remembers "that was me" confirmations to improve future recognition.
 
 ## How It Works

@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Le Concierge — logbook</title>
+<meta name="design-concept" content="Behaves like the building's logbook, because a visitor is an entry that needs a signature before the door opens.">
+<meta name="design-signature" content="The live arrival is the next blank line in a ruled ledger, and answering stamps it in ink.">
+<meta name="design-references" content="stripe-docs-2019, pudding-2019, basecamp-2019">
+<meta name="design-assets" content="Transcript, decision, parcel label from workflows/fixtures; measured latency from execution ebfce486">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ground: oklch(0.965 0.005 250);
+    --ink: oklch(0.24 0.012 250);
+    --ink-2: oklch(0.5 0.012 250);
+    --rule: oklch(0.87 0.008 250);
+    --rule-strong: oklch(0.72 0.01 250);
+    --stamp: oklch(0.45 0.09 255);
+    --radius: 0;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Instrument Sans", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 62rem;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 3rem;
+  }
+  .masthead {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 0.6rem;
+    gap: 1rem;
+  }
+  .masthead h1 {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .masthead .stamp-id {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.7rem;
+    color: var(--ink-2);
+  }
+  .lead {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+    gap: 3rem;
+    padding: 2rem 0 2.5rem;
+    border-bottom: 1px solid var(--rule-strong);
+    align-items: start;
+  }
+  @media (max-width: 54rem) { .lead { grid-template-columns: 1fr; gap: 1.75rem; } }
+
+  .when {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 3.5rem;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+  .when small { font-size: 0.875rem; color: var(--ink-2); letter-spacing: 0.08em; }
+  .who {
+    font-size: clamp(1.5rem, 3.4vw, 2rem);
+    line-height: 1.2;
+    letter-spacing: -0.015em;
+    margin: 0.75rem 0 0;
+    max-width: 22ch;
+    text-wrap: balance;
+  }
+  .who b { font-weight: 600; }
+  .quote {
+    margin: 1.25rem 0 0;
+    padding-left: 1rem;
+    border-left: 2px solid var(--stamp);
+    font-size: 1rem;
+    line-height: 1.6;
+    color: var(--ink);
+    max-width: 40ch;
+  }
+
+  .sign {
+    border: 1px solid var(--rule-strong);
+    padding: 1.25rem;
+    display: grid;
+    gap: 1rem;
+    position: relative;
+    background: oklch(0.985 0.004 250);
+  }
+  .sign .row {
+    display: flex;
+    justify-content: space-between;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.75rem;
+    color: var(--ink-2);
+  }
+  .sign .row b { color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; }
+  .sign .ask { font-size: 1rem; line-height: 1.45; margin: 0; }
+  .buttons { display: grid; gap: 0.5rem; }
+  button { font: inherit; border-radius: var(--radius); cursor: pointer; }
+  .yes {
+    background: var(--ink);
+    color: var(--ground);
+    border: 1px solid var(--ink);
+    padding: 0.75rem 1rem;
+    font-weight: 500;
+    transition: background 160ms ease-out, transform 140ms ease-out;
+  }
+  .yes:hover { background: oklch(0.32 0.012 250); }
+  .yes:active { transform: scale(0.99); }
+  .no {
+    background: none;
+    border: 1px solid var(--rule-strong);
+    padding: 0.7rem 1rem;
+    color: var(--ink);
+    transition: border-color 160ms ease-out;
+  }
+  .no:hover { border-color: var(--ink); }
+  :focus-visible { outline: 2px solid var(--stamp); outline-offset: 2px; }
+
+  .stamp {
+    position: absolute;
+    right: 0.75rem;
+    top: -0.9rem;
+    transform: rotate(-4deg);
+    border: 2px solid var(--stamp);
+    color: var(--stamp);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    padding: 0.2rem 0.45rem;
+    background: var(--ground);
+  }
+
+  /* ledger */
+  table { width: 100%; border-collapse: collapse; margin-top: 2rem; }
+  caption {
+    text-align: left;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.7rem;
+    color: var(--ink-2);
+    padding-bottom: 0.5rem;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.65rem 0.75rem 0.65rem 0;
+    border-bottom: 1px solid var(--rule);
+    font-size: 0.9375rem;
+    vertical-align: baseline;
+  }
+  th {
+    font-size: 0.8rem;
+    color: var(--ink-2);
+    font-weight: 500;
+    border-bottom: 1px solid var(--rule-strong);
+  }
+  td.t {
+    font-family: "IBM Plex Mono", monospace;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-2);
+    white-space: nowrap;
+  }
+  tr.now td { background: oklch(0.94 0.012 70); font-weight: 500; }
+  .state { font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; letter-spacing: 0.06em; }
+  .ok { color: oklch(0.45 0.09 150); }
+  .no-state { color: var(--stamp); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="masthead">
+    <h1>Entry log · 12 Rue des Lilas · Tuesday 21 November</h1>
+    <span class="stamp-id">worker Persia-le-concierge · execution ebfce486</span>
+  </div>
+
+  <section class="lead">
+    <div>
+      <div class="when">14:32<small>19s left</small></div>
+      <h2 class="who">The next line in the log is <b>a courier with a parcel for flat 12</b>.</h2>
+      <p class="quote">“Hello, it's the delivery for flat twelve, I have a parcel for Persia.”</p>
+    </div>
+
+    <div class="sign">
+      <span class="stamp">awaiting signature</span>
+      <p class="ask">Sign to open the door, or leave it shut. The line records itself either way.</p>
+      <div class="row"><span>face</span><b>distance 0.31</b></div>
+      <div class="row"><span>flat resolved</span><b>12 · 0.86</b></div>
+      <div class="row"><span>parcel label</span><b>DPD · FLAT 12</b></div>
+      <div class="buttons">
+        <button class="yes" type="button">Sign and open</button>
+        <button class="no" type="button">Leave it shut</button>
+      </div>
+    </div>
+  </section>
+
+  <table>
+    <caption>Today</caption>
+    <thead>
+      <tr><th>Time</th><th>Who</th><th>Flat</th><th>State</th></tr>
+    </thead>
+    <tbody>
+      <tr class="now">
+        <td class="t">14:32</td>
+        <td>Courier, parcel in hand</td>
+        <td>12</td>
+        <td class="state">awaiting signature</td>
+      </tr>
+      <tr>
+        <td class="t">10:14</td>
+        <td>DPD courier</td>
+        <td>12</td>
+        <td class="state ok">approved · parcel at desk</td>
+      </tr>
+      <tr>
+        <td class="t">09:02</td>
+        <td>Unknown visitor</td>
+        <td>12</td>
+        <td class="state no-state">declined · 60s timeout</td>
+      </tr>
+      <tr>
+        <td class="t">08:07</td>
+        <td>Persia, returning</td>
+        <td>12</td>
+        <td class="state ok">approved · that was me</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+</body>
+</html>

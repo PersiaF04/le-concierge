@@ -1,0 +1,312 @@
+/* Resident app — the building's logbook, in a pocket.
+   Paper stays paper; rules do the work that shadows do elsewhere. */
+
+.shell {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--s5) var(--s4);
+}
+
+.phone {
+  width: min(420px, 100%);
+  height: min(880px, calc(100dvh - var(--s7)));
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--radius-phone);
+  overflow: hidden;
+}
+
+@media (max-width: 460px) {
+  .shell { padding: 0; }
+  .phone {
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+}
+
+/* ── header ─────────────────────────────────────────────── */
+
+.phone-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s4);
+  padding: var(--s4) var(--s4) var(--s3);
+  border-bottom: 1px solid var(--rule);
+}
+
+.phone-id { display: grid; gap: 0.15rem; }
+
+.phone-name {
+  font-size: var(--step-2);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.phone-head-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--s2);
+}
+
+.mode-badge {
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border: 1px solid var(--rule-2);
+  padding: 0.1rem 0.35rem;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.mode-badge[data-mode="live"] { border-color: var(--approve); color: var(--approve); }
+
+.theme-toggle {
+  padding: 0;
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* ── body + tabs ────────────────────────────────────────── */
+
+.phone-body {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+.screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s5);
+  padding: var(--s5) var(--s4) var(--s6);
+}
+
+.phone-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid var(--rule-2);
+}
+
+.tab {
+  border: 0;
+  border-top: 2px solid transparent;
+  background: transparent;
+  padding: 0.75rem 0 calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ink-2);
+}
+.tab[aria-current="page"] {
+  color: var(--ink);
+  border-top-color: var(--ink);
+}
+
+/* ── the entry ──────────────────────────────────────────── */
+
+.entry { display: grid; gap: var(--s4); }
+
+.entry-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  border-bottom: 1.5px solid var(--ink);
+  padding-bottom: var(--s2);
+}
+
+.entry h2 {
+  font-size: var(--step-3);
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+.quote {
+  font-size: var(--step-1);
+  line-height: 1.45;
+  border-left: 1.5px solid var(--rule-2);
+  padding-left: var(--s3);
+  text-wrap: pretty;
+}
+
+.facts {
+  display: grid;
+  gap: var(--s2);
+  padding: var(--s3) 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.facts .record-line b { text-align: right; }
+
+.stamp[data-status="approved"] { color: var(--approve); }
+.stamp[data-status="declined"],
+.stamp[data-status="expired"] { color: var(--alert); }
+.stamp[data-status="pending_decision"],
+.stamp[data-status="arriving"] { color: var(--stamp); }
+
+/* ── the door's photograph ──────────────────────────────── */
+
+.intercom-shot { margin: 0; display: grid; gap: var(--s2); }
+
+.intercom-shot img,
+.portrait img,
+.portrait video {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  display: block;
+  border: 1px solid var(--rule-2);
+  background: var(--paper-2);
+  filter: saturate(0.94);
+}
+
+.shot-empty {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  border: 1px dashed var(--rule-2);
+  color: var(--ink-2);
+  text-align: center;
+  padding: var(--s4);
+}
+
+.camera-preview {
+  width: 100%;
+  max-height: 7rem;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border: 1px solid var(--rule-2);
+  background: var(--paper-2);
+}
+
+/* ── signature ──────────────────────────────────────────── */
+
+.sign {
+  display: grid;
+  gap: var(--s3);
+  border-top: 1px solid var(--rule);
+  padding-top: var(--s4);
+}
+
+.sign-line { height: 2.5rem; border-bottom: 1px dashed var(--rule-2); }
+
+.sign-actions { display: grid; gap: var(--s2); }
+.sign-actions .btn,
+.sign-actions .btn-quiet,
+.btn.full,
+.btn-quiet.full {
+  width: 100%;
+  justify-content: center;
+  gap: var(--s3);
+}
+
+.resolved {
+  display: grid;
+  gap: var(--s3);
+  justify-items: start;
+  border-top: 1px solid var(--rule);
+  padding-top: var(--s4);
+}
+
+@keyframes stamp-land {
+  from { opacity: 0; transform: rotate(-9deg) scale(1.35); }
+  to { opacity: 1; transform: rotate(-3deg) scale(1); }
+}
+
+.stamp-landed {
+  transform: rotate(-3deg);
+  animation: stamp-land var(--stamp-in) both;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.55rem;
+}
+
+.notice {
+  border-left: 2px solid var(--stamp);
+  padding-left: var(--s3);
+  color: var(--ink-2);
+}
+
+.remote-line {
+  border-top: 1px solid var(--rule);
+  padding-top: var(--s3);
+}
+
+/* ── setup ──────────────────────────────────────────────── */
+
+.setup {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s5);
+  padding: var(--s6) var(--s4) var(--s6);
+}
+
+.setup-lede { display: grid; gap: var(--s3); }
+.setup-lede h1 { font-size: var(--step-4); text-wrap: balance; }
+
+.setup-form { display: grid; gap: var(--s4); }
+.setup-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
+.setup-actions { display: grid; gap: var(--s2); }
+.setup-actions .btn,
+.setup-actions .btn-quiet { width: 100%; justify-content: center; }
+.setup-error { color: var(--alert); }
+.setup-note { border-top: 1px solid var(--rule); padding-top: var(--s3); }
+
+/* ── parcels + me ───────────────────────────────────────── */
+
+.screen-head {
+  display: grid;
+  gap: var(--s1);
+  border-bottom: 1.5px solid var(--ink);
+  padding-bottom: var(--s3);
+}
+
+.block { display: grid; gap: var(--s3); }
+
+.block-end {
+  border-top: 1px solid var(--rule);
+  padding-top: var(--s4);
+}
+
+.parcel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--rule);
+}
+
+.parcel {
+  display: grid;
+  gap: var(--s2);
+  padding: var(--s4) 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.parcel-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+.parcel-label { font-size: var(--step-0); letter-spacing: 0.02em; }
+
+.inline-form { display: grid; gap: var(--s3); }
+
+.portrait { display: grid; }
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 14ch;
+}
+
+.danger { color: var(--alert); }

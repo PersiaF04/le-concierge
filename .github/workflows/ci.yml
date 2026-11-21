@@ -97,6 +97,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Typecheck the apps
+        run: |
+          npm -w apps/resident run typecheck
+          npm -w apps/concierge run typecheck
+
+      - name: Build the apps
+        run: |
+          npm run build:apps
+          test -f apps/resident/dist/index.html
+          test -f apps/concierge/dist/index.html
+          echo "Both apps built"
+
       - name: Verify build
         run: |
           echo "Verifying build..."
