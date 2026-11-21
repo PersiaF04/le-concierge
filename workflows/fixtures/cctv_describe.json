@@ -1,0 +1,18 @@
+{
+  "people": [
+    {
+      "appearance": "Tall man, navy rain jacket, grey beanie, glasses",
+      "carrying": ["black backpack"],
+      "actions": ["walks up to the entrance", "taps a key fob on the reader", "opens the door and walks in"],
+      "direction": "in",
+      "interactions": ["fob", "door"]
+    },
+    {
+      "appearance": "Person in a black hoodie with the hood up, light jeans, white trainers",
+      "carrying": [],
+      "actions": ["waits beside the entrance", "catches the door before it closes", "walks in behind the first person"],
+      "direction": "in",
+      "interactions": ["door", "followed someone in"]
+    }
+  ]
+}

@@ -109,6 +109,7 @@ each one is recorded in the execution history.
 | `visitor-arrival` | MediaPipe fires at the door, the API calls `POST /v1/workflows/visitor-arrival/execute` | describe the snapshot (Mistral vision) → match the face-api.js descriptor → transcribe the intercom (Voxtral) → Le Chonk decides who it is for and what to say → post the visit (pushed to the resident over `WS /live`) → speak the reply → log | **waits for the `resident-decision` signal** from `POST /visits/{id}/decision`; a timeout declines |
 | `parcel-arrival` | Parcel photographed at the desk | read the label (Mistral vision) → match the flat → Le Chonk writes the notice → notify the resident on their channel → log | — |
 | `nightly-digest` | Scheduled, `0 19 * * *` in `Europe/London` | pull the day's events from the API → Le Chonk writes the digest → post it → log | — |
+| `cctv-event` | MediaPipe sees a person on a CCTV camera | describe the frames (Mistral vision) → label the people (a resident by description, else "Unknown person N" or "Delivery courier N") → write one past-tense log line → log it as `cctv.<kind>` | `discard: true` when the frames show nobody |
 
 Agents: Le Chonk, inside the activities, runs on the **Mistral Agents SDK**
 (durable agents are being deprecated), so the decision prompt, tools and model

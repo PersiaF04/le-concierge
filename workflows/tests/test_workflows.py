@@ -14,7 +14,7 @@ import pytest
 
 from worker import config
 from worker.shared import api, replay
-from worker.workflows import nightly_digest, parcel_arrival, visitor_arrival
+from worker.workflows import cctv_event, nightly_digest, parcel_arrival, visitor_arrival
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -26,12 +26,12 @@ def replay_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
 
 
-def test_discovery_finds_the_three_workflows() -> None:
+def test_discovery_finds_the_four_workflows() -> None:
     import mistralai.workflows as workflows
 
     classes = workflows.discover_all_workflows_in_package("worker.workflows")
     names = {workflows.get_workflow_definition(cls).name for cls in classes}
-    assert names == {"visitor-arrival", "parcel-arrival", "nightly-digest"}
+    assert names == {"visitor-arrival", "parcel-arrival", "nightly-digest", "cctv-event"}
 
 
 def test_settings_read_the_replay_switch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -226,6 +226,89 @@ async def test_api_client_refuses_real_calls_without_a_key(
     monkeypatch.setenv("WORKFLOWS_REPLAY", "0")
     with pytest.raises(Exception):
         await api.notify_resident(config.load_settings(), {"flat": "12"})
+
+
+def _cctv_input() -> cctv_event.CctvEventInput:
+    return cctv_event.CctvEventInput.model_validate_json(
+        (FIXTURES / "cctv_input.json").read_text(encoding="utf-8")
+    )
+
+
+def _capture_logged(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    logged: list[dict] = []
+    real = api.log_event
+
+    async def spy(settings, event):
+        logged.append(event)
+        return await real(settings, event)
+
+    monkeypatch.setattr(cctv_event.api, "log_event", spy)
+    return logged
+
+
+async def test_cctv_event_logs_a_tailgate(monkeypatch: pytest.MonkeyPatch) -> None:
+    logged = _capture_logged(monkeypatch)
+    result = (await cctv_event.CctvEventWorkflow().run(_cctv_input()))["result"]
+
+    assert result["discard"] is False
+    event = result["event"]
+    assert event["kind"] == "tailgate"
+    assert "Unknown person 4 tailgated" in event["text"]
+    assert event["people"] == ["Rob Finean", "Unknown person 4"]
+    assert event["camera"] == "entrance"
+    assert event["clip_url"].endswith("1402.webm")
+    assert result["model"]["vision"] and result["model"]["decision"]
+
+    assert len(logged) == 1
+    assert logged[0]["type"] == "cctv.tailgate"
+    assert logged[0]["text"] == event["text"]
+    assert logged[0]["started_at"] == "2026-11-21T14:02:10Z"
+    assert logged[0]["model"] == result["model"]
+
+
+async def test_cctv_event_discards_frames_without_people(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    for path in FIXTURES.glob("*.json"):
+        (tmp_path / path.name).write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / "cctv_describe.json").write_text('{"people": []}', encoding="utf-8")
+    monkeypatch.setenv("WORKFLOWS_FIXTURES_DIR", str(tmp_path))
+    logged = _capture_logged(monkeypatch)
+
+    result = (await cctv_event.CctvEventWorkflow().run(_cctv_input()))["result"]
+
+    assert result["discard"] is True
+    assert result["event"] is None
+    assert result["model"]["vision"]
+    assert logged == []
+
+
+async def test_cctv_event_discards_a_segment_without_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logged = _capture_logged(monkeypatch)
+    segment = _cctv_input().model_copy(update={"frames": []})
+    result = (await cctv_event.CctvEventWorkflow().run(segment))["result"]
+    assert result["discard"] is True
+    assert logged == []
+
+
+def test_cctv_input_caps_the_frames() -> None:
+    with pytest.raises(ValueError):
+        cctv_event.CctvEventInput(
+            camera="lobby", started_at="t0", ended_at="t1", frames=["x"] * 7
+        )
+
+
+async def test_cctv_write_event_falls_back_to_other(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "cctv_event.json").write_text(
+        '{"text": "Someone waved", "kind": "dance"}', encoding="utf-8"
+    )
+    monkeypatch.setenv("WORKFLOWS_FIXTURES_DIR", str(tmp_path))
+    written = await cctv_event.write_event({})
+    assert written["kind"] == "other"
 
 
 class _FakeTranscriptions:
