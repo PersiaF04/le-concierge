@@ -360,6 +360,20 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
   const server = createServer(app);
   const wss = new WebSocketServer({ server, path: '/live' });
 
+  // One line per API call (method, path, status, ms), so the demo can be debugged from the journal.
+  // Skipped under node --test to keep test output clean. Bodies are never logged: they can hold
+  // snapshots, audio and residents' details.
+  if (process.env.NODE_ENV !== "test" && process.env.REQUEST_LOG !== "0") {
+    app.use((req, res, next) => {
+      const started = Date.now();
+      res.on("finish", () => {
+        if (req.path === "/health" || req.path.startsWith("/executions/")) return;
+        const flat = req.body?.flat ?? req.query?.flat ?? "";
+        console.log(`${req.method} ${req.path} ${res.statusCode} ${Date.now() - started}ms${flat ? " flat=" + flat : ""}`);
+      });
+      next();
+    });
+  }
   app.use(express.json({ limit: '8mb' }));
   app.use(express.urlencoded({ extended: true }));
 
