@@ -68,6 +68,20 @@ export interface DoorVoiceHooks {
   snapshot: () => string | null;
   /** The visit `ask_resident` started, so the door can follow it. */
   onVisit?: (visitId: string) => void;
+  /** The resident answered, or the wait ran out: the conversation can wind down. */
+  onDecision?: (decision: Decision) => void;
+}
+
+/** Fields that would name or identify a resident; never part of what the agent is told. */
+const PERSONAL = new Set(["name", "email", "phone", "whatsapp", "resident_id", "residentId"]);
+
+/** A tool result with every resident detail removed, however deep, before the agent sees it. */
+export function withoutPersonalDetails<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(withoutPersonalDetails) as T;
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !PERSONAL.has(key)).map(([key, v]) => [key, withoutPersonalDetails(v)]),
+  ) as T;
 }
 
 /** Start (but do not connect) a voice session with the door's tools. */
@@ -80,22 +94,31 @@ export async function openDoorVoice(hooks: DoorVoiceHooks) {
       visitor_name: z.string(),
       reason: z.string().optional(),
     }),
-    handler: async ({ flat }) => {
-      // The workflow takes the flat and the photograph; the name and the reason
-      // stay in the conversation (and in log_event), not in the visit.
-      const created = await startArrival({ flat, snapshot: hooks.snapshot(), audio: null, doorId });
-      if (!created) return { decision: "expired", note: "the resident could not be reached" };
-      hooks.onVisit?.(created.visitId);
-      const decision = await waitForDecision(created.visitId);
-      return { decision };
-    },
+    handler: async ({ flat }) => withoutPersonalDetails(await askResidentFor(flat)),
   });
+
+  /** Ring the flat and wait; the result goes through withoutPersonalDetails. */
+  async function askResidentFor(flat: string) {
+    // The workflow takes the flat and the photograph; the name and the reason
+    // stay in the conversation (and in log_event), not in the visit.
+    const created = await startArrival({ flat, snapshot: hooks.snapshot(), audio: null, doorId });
+    if (!created) {
+      hooks.onDecision?.("expired");
+      return { decision: "expired", note: "the resident could not be reached" };
+    }
+    // No such flat, or nobody registered there: the agent says so and asks again.
+    if ("refused" in created) return { decision: created.refused, flat: created.flat };
+    hooks.onVisit?.(created.visitId);
+    const decision = await waitForDecision(created.visitId);
+    hooks.onDecision?.(decision);
+    return { decision };
+  }
 
   const logEvent = functionTool({
     name: "log_event",
     description: "Write one line to the building's visitor log.",
     parameters: z.object({ text: z.string() }),
-    handler: async ({ text }) => ({ logged: await logDoorEvent(text) }),
+    handler: async ({ text }) => withoutPersonalDetails({ logged: await logDoorEvent(text) }),
   });
 
   return initSession({

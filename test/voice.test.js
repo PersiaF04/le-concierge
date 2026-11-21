@@ -10,7 +10,7 @@ import { join } from 'node:path';
 
 import { createApp, configFromEnv } from '../server/app.js';
 import { openDb } from '../server/db.js';
-import { doorOrigin } from '../server/voice.js';
+import { doorOrigin, INSTRUCTIONS } from '../server/voice.js';
 
 const dirs = [];
 after(() => {
@@ -177,4 +177,16 @@ test('no key means 503, a Mistral failure means 502', async () => {
   } finally {
     await api.close();
   }
+});
+
+test('the instructions cover unknown flats, empty flats and a stuck conversation', () => {
+  assert.match(INSTRUCTIONS, /"no_such_flat"[^\n]*no flat N in this building[^\n]*check the number/);
+  assert.match(INSTRUCTIONS, /"no_resident"[^\n]*nobody registered at flat N/);
+  assert.match(INSTRUCTIONS, /stops responding or the conversation goes in circles, say goodbye and call hang_up/);
+});
+
+test('the instructions make resident names a hard rule: "the resident in flat N", never a name', () => {
+  assert.match(INSTRUCTIONS, /never say, confirm or deny a resident's name or any personal detail/);
+  assert.match(INSTRUCTIONS, /"the resident in flat N"/);
+  assert.match(INSTRUCTIONS, /never confirm whether a named person lives here/);
 });

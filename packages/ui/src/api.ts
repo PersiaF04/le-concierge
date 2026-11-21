@@ -118,10 +118,10 @@ export async function fetchCurrentVisit(flat: string): Promise<Visit> {
   return visit ? { ...visit, mode: "workflow" } : recordedVisit;
 }
 
-/**
- * Ask the API to start a visitor-arrival execution. This is the doorbell: the
- * button the door presses when MediaPipe sees someone (issue #3 will own it).
- */
+export type StartedArrival = { visitId: string; executionId: string | null };
+/** The API refused the flat: it is not in the building, or nobody is registered there. */
+export type RefusedArrival = { refused: "no_such_flat" | "no_resident"; flat: string; reply: string };
+
 /** Everyone waiting at any door, newest first. */
 export async function fetchPendingVisits(flat?: string): Promise<Visit[]> {
   const query = flat ? `&flat=${encodeURIComponent(flat)}` : "";
@@ -129,6 +129,11 @@ export async function fetchPendingVisits(flat?: string): Promise<Visit[]> {
   return (list ?? []).map((visit) => ({ ...visit, mode: "workflow" as const }));
 }
 
+/**
+ * Ask the API to start a visitor-arrival execution, or learn that the flat
+ * does not exist or has nobody registered (422). This is the doorbell: the
+ * button the door presses when MediaPipe sees someone (issue #3 will own it).
+ */
 export async function startArrival(input: {
   flat?: string | null;
   snapshot?: string | null;
@@ -137,18 +142,29 @@ export async function startArrival(input: {
   face?: Record<string, unknown>;
   /** The door page that rang, so only its own socket hears the visit. */
   doorId?: string | null;
-}): Promise<{ visitId: string; executionId: string | null } | null> {
-  const created = await json<{ visit_id: string; execution_id: string | null }>("/arrivals", {
-    method: "POST",
-    body: JSON.stringify({
-      flat: input.flat ?? null,
-      snapshot_url: input.snapshot ?? null,
-      audio_url: input.audio ?? null,
-      face: input.face ?? {},
-      door_id: input.doorId ?? null,
-    }),
-  });
-  return created ? { visitId: created.visit_id, executionId: created.execution_id } : null;
+}): Promise<StartedArrival | RefusedArrival | null> {
+  if (!API) return null;
+  try {
+    const response = await fetch(`${API}/arrivals`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        flat: input.flat ?? null,
+        snapshot_url: input.snapshot ?? null,
+        audio_url: input.audio ?? null,
+        face: input.face ?? {},
+        door_id: input.doorId ?? null,
+      }),
+    });
+    const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+    if (response.status === 422 && (body?.error === "no_such_flat" || body?.error === "no_resident")) {
+      return { refused: body.error, flat: String(body.flat ?? ""), reply: String(body.reply ?? "") };
+    }
+    if (!response.ok || !body) return null;
+    return { visitId: String(body.visit_id), executionId: (body.execution_id as string | null) ?? null };
+  } catch {
+    return null;
+  }
 }
 
 /**

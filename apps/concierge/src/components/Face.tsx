@@ -14,7 +14,7 @@ const LABEL: Record<FaceMood, string> = {
  * heavier line so it reads across a lobby, and four states a visitor can tell
  * apart at a glance:
  *
- * - idle: a smile, a slow blink;
+ * - idle: a smile, a slow blink (dimmed while resting, when nobody is talking);
  * - listening: brows up, eyes wide, sound arcs at both ears;
  * - thinking: eyes up and aside, a dotted thought rising;
  * - speaking: the mouth opens with the loudness of the reply (`level`, 0…1,
@@ -24,11 +24,14 @@ export default function Face({
   mood,
   level,
   gaze = { x: 0, y: 0 },
+  resting = false,
 }: {
   mood: FaceMood;
   /** Current loudness of the reply, 0…1. Only read while speaking. */
   level?: () => number;
   gaze?: { x: number; y: number };
+  /** Nobody is talking to the door: calm, and a little dimmed. */
+  resting?: boolean;
 }) {
   const mouthRef = useRef<SVGPathElement | null>(null);
 
@@ -55,7 +58,7 @@ export default function Face({
   const eyeR = mood === "listening" ? 7.5 : 6.5;
 
   return (
-    <svg className="face" data-mood={mood} viewBox="0 0 240 240" role="img" aria-label={LABEL[mood]}>
+    <svg className="face" data-mood={mood} data-resting={resting} viewBox="0 0 240 240" role="img" aria-label={LABEL[mood]}>
       {/* sound arcs at the ears, only while listening */}
       <g className="face-ears" aria-hidden="true">
         <path d="M24 104 q-9 16 0 32" />

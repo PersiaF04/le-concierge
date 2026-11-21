@@ -10,16 +10,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 
-import { createApp, configFromEnv } from '../server/app.js';
+import { createApp, configFromEnv, normalizeFlat, parseFlats } from '../server/app.js';
 import { openDb } from '../server/db.js';
 
 const dirs = [];
+
+/** Flats the tests ring; each gets an anonymous resident so arrivals are accepted. */
+const RINGED = ['12', '60', '61', '80'];
 
 async function start({ env = { WORKFLOWS_REPLAY: "1", NODE_ENV: "test" }, fetch: mistralFetch } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'lcv-api-'));
   dirs.push(dir);
   const db = openDb(join(dir, 'test.db'));
-  const api = createApp({ db, config: configFromEnv(env), fetch: mistralFetch });
+  const api = createApp({ db, config: configFromEnv({ BUILDING_FLATS: '1-99,PH', ...env }), fetch: mistralFetch });
   await new Promise((resolve) => api.server.listen(0, '127.0.0.1', resolve));
   const { port } = api.server.address();
   const base = `http://127.0.0.1:${port}`;
@@ -33,6 +36,7 @@ async function start({ env = { WORKFLOWS_REPLAY: "1", NODE_ENV: "test" }, fetch:
     const data = type.includes('json') ? await response.json() : Buffer.from(await response.arrayBuffer());
     return { status: response.status, data };
   };
+  for (const flat of RINGED) await call('POST', '/residents', { flat, anonymous: true });
   return {
     base,
     ws: `ws://127.0.0.1:${port}`,
@@ -562,6 +566,63 @@ describe('live API with a fake Mistral', () => {
     assert.equal(created.status, 502);
     const visit = (await api.get(`/visits/${created.data.visit_id}`)).data;
     assert.equal(visit.status, 'fallback');
+  });
+});
+
+describe('flat validation', () => {
+  test('parseFlats reads ranges and names; normalizeFlat ignores case, spaces and leading zeros', () => {
+    assert.deepEqual([...parseFlats('1-3, ph ,5')], ['1', '2', '3', 'PH', '5']);
+    assert.deepEqual([...parseFlats('3-1')], ['1', '2', '3']);
+    assert.equal(normalizeFlat(' 07 '), '7');
+    assert.equal(normalizeFlat('ph'), 'PH');
+    assert.equal(configFromEnv({}).buildingFlats.size, 20);
+  });
+
+  let api;
+  let calls;
+  before(async () => {
+    calls = [];
+    const fakeMistral = async (url) => {
+      calls.push(String(url));
+      return new Response(JSON.stringify({ execution_id: 'exec_flat' }), { status: 200 });
+    };
+    api = await start({
+      env: { MISTRAL_API_KEY: 'test-key', MISTRAL_API_URL: 'https://mistral.invalid', NODE_ENV: 'test', BUILDING_FLATS: '1-20,PH' },
+      fetch: fakeMistral,
+    });
+  });
+  after(() => api.close());
+
+  test('POST /arrivals refuses a flat the building does not have, and starts nothing', async () => {
+    const before = calls.length;
+    const refused = await api.post('/arrivals', { flat: '99' });
+    assert.equal(refused.status, 422);
+    assert.equal(refused.data.error, 'no_such_flat');
+    assert.equal(refused.data.flat, '99');
+    assert.match(refused.data.reply, /no flat 99/);
+    assert.equal(calls.length, before, 'no workflow started');
+    assert.equal(refused.data.visit_id, undefined);
+  });
+
+  test('POST /arrivals refuses a flat with nobody registered', async () => {
+    const before = calls.length;
+    const refused = await api.post('/arrivals', { flat: 'ph' });
+    assert.equal(refused.status, 422);
+    assert.deepEqual([refused.data.error, refused.data.flat], ['no_resident', 'ph']);
+    assert.equal(calls.length, before);
+  });
+
+  test('a registered flat, and a null flat, still start the workflow', async () => {
+    assert.equal((await api.post('/arrivals', { flat: '012' })).status, 201);
+    assert.equal((await api.post('/arrivals', { flat: null })).status, 201);
+    await api.post('/residents', { flat: 'PH', anonymous: true });
+    assert.equal((await api.post('/arrivals', { flat: 'PH' })).status, 201);
+  });
+
+  test('GET /flats/:flat says whether it exists and has a resident', async () => {
+    assert.deepEqual((await api.get('/flats/12')).data, { exists: true, hasResident: true });
+    assert.deepEqual((await api.get('/flats/3')).data, { exists: true, hasResident: false });
+    assert.deepEqual((await api.get('/flats/99')).data, { exists: false, hasResident: false });
   });
 });
 
