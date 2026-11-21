@@ -111,6 +111,17 @@ each one is recorded in the execution history.
 | `nightly-digest` | Scheduled, `0 19 * * *` in `Europe/London` | pull the day's events from the API → Le Chonk writes the digest → post it → log | — |
 | `cctv-event` | MediaPipe sees a person on a CCTV camera | describe the frames (Mistral vision) → label the people (a resident by description, else "Unknown person N" or "Delivery courier N") → write one past-tense log line → log it as `cctv.<kind>` | `discard: true` when the frames show nobody |
 
+The door itself is a **Mistral Voice Agent**: press the bell and the visitor
+talks to Le Concierge live, over WebRTC (`client.audio.sessions.create()` on
+the API, `initSession` in the browser; `mistral-small-latest` with Voxtral
+realtime transcription and Voxtral TTS in the `gb_jane_neutral` voice, the same
+voice the workflow speaks in). It asks who they are visiting and their name,
+then calls its `ask_resident` tool, which hands off to the `visitor-arrival`
+Workflow: the visit goes to the resident's phone, and the agent tells the
+visitor the resident's answer. A `log_event` tool writes to the timeline. If
+the voice session cannot start, the door falls back to recording six seconds
+and playing the workflow's Voxtral reply. See [docs/api.md](docs/api.md#voice-mistral-voice-agents).
+
 ### Which model runs which step
 
 Le Chonk (Mistral Large 4, `CHONK_MODEL=mistral-large-latest`) runs every step
@@ -124,6 +135,7 @@ intercom: Large 4 reasons by default and took 74 s, and even
 | `write_digest` | `nightly-digest` | **Le Chonk** (Large 4, `reasoning_effort: "low"`) |
 | `write_notice` | `parcel-arrival` | **Le Chonk** (Large 4, `reasoning_effort: "low"`) |
 | `chonk_review_event`: flags tailgating, loitering, unanswered rings | `cctv-event` | **Le Chonk** (Large 4, `reasoning_effort: "low"`) |
+| The live door conversation (Mistral Voice Agent) | door | Mistral Small with Voxtral (latency at the door) |
 | `decide_visit`: who the visitor is for, what the door says | `visitor-arrival` | Mistral Small (latency at the door) |
 | `label_people`, `write_event` | `cctv-event` | Mistral Small |
 | `describe_snapshot`, `read_label`, `describe_cctv_frames` | all | Mistral Small (vision) |

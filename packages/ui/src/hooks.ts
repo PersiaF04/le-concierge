@@ -131,15 +131,3 @@ export function useWebcam() {
 
   return { attach, state, error, shot, start, stop, capture, reset: () => setShot(null) };
 }
-
-/** Seconds left before the door stays shut. Counts down from the server's timeout. */
-export function useCountdown(from: number, running: boolean): number {
-  const [left, setLeft] = useState(from);
-  useEffect(() => setLeft(from), [from]);
-  useEffect(() => {
-    if (!running) return;
-    const id = setInterval(() => setLeft((value) => (value > 0 ? value - 1 : 0)), 1000);
-    return () => clearInterval(id);
-  }, [running]);
-  return left;
-}

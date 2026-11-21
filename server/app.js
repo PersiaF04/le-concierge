@@ -8,6 +8,7 @@
  *   POST /visits                worker -> store the visit, push it to /live
  *   POST /visits/:id/decision   app -> answer the door, signal the execution
  *   POST /intercom/speak        worker -> what the door said, pushed to /live
+ *   POST /voice/session         door -> start a Mistral Voice Agent session (voice.js)
  *
  * Everything the worker writes to `/visits` and `/intercom/speak` is broadcast
  * to the resident app on `ws://…/live?flat=12`, so the phone follows the
@@ -22,6 +23,7 @@
 import express from 'express';
 import { WebSocket as Socket, WebSocketServer } from 'ws';
 import { createServer } from 'node:http';
+import { mountVoice, voiceConfigFromEnv } from './voice.js';
 
 const TRUTHY = new Set(['1', 'true', 'yes', 'on']);
 const PENDING = new Set(['arriving', 'pending_decision']);
@@ -48,6 +50,7 @@ export function configFromEnv(env = process.env) {
     // A visit still waiting long after its own timeout is swept to "expired".
     visitTtlSeconds: Number(env.VISIT_TTL_SECONDS || 300),
     retryBaseMs: Number(env.MISTRAL_RETRY_BASE_MS || 600),
+    voice: voiceConfigFromEnv(env),
   };
 }
 
@@ -57,6 +60,10 @@ const newId = (prefix) =>
 const str = (value) => (value === undefined || value === null || value === '' ? null : String(value));
 const fail = (res, status, error) => res.status(status).json({ error });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A door page's id (a UUID from the browser), or null when absent or malformed. */
+const doorIdFrom = (value) =>
+  typeof value === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(value) ? value : null;
 
 /** A face-api.js descriptor: a non-empty array of finite numbers. */
 function isDescriptor(value) {
@@ -73,9 +80,10 @@ function euclidean(a, b) {
  * Build the API around an open database. Nothing listens until the caller
  * calls `server.listen`, so tests can start it on a random port.
  *
- * @param {{ db: import('node:sqlite').DatabaseSync, config?: object, fetch?: typeof fetch }} options
+ * @param {{ db: import('node:sqlite').DatabaseSync, config?: object, fetch?: typeof fetch, voiceClient?: object }} options
+ *   `voiceClient` stands in for the Mistral SDK client in tests.
  */
-export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = globalThis.fetch }) {
+export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = globalThis.fetch, voiceClient }) {
   // ==========================================================================
   // Storage
   // ==========================================================================
@@ -189,17 +197,22 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
 
   /** Push a visit to the sockets watching its flat, and nobody else. */
   /**
-   * Who hears about a flat: its own residents' sockets, and every door socket.
-   * A door sees the whole building, including visits with no flat yet.
+   * Who hears about a visit or a photograph:
+   * - a resident socket (`?flat=`), for its own flat;
+   * - a door page's socket (`?scope=door&door=<id>`), only for what that page
+   *   started, so one door's conversation never plays on another;
+   * - the building-wide `?scope=door` socket (the #ledger log), for everything.
    */
-  const hears = (socket, flat) =>
-    socket.scope === 'door' || (flat != null && socket.flat === String(flat));
+  const hears = (socket, flat, doorId) => {
+    if (socket.scope === 'door') return socket.doorId ? doorId === socket.doorId : true;
+    return flat != null && socket.flat === String(flat);
+  };
 
   /** Push a visit to the sockets watching its flat, and to the door. */
   function broadcast(visit) {
     const frame = JSON.stringify({ type: 'visit', visit: publicVisit(visit) });
     for (const socket of clients) {
-      if (!hears(socket, visit.flat)) continue;
+      if (!hears(socket, visit.flat, visit.doorId ?? null)) continue;
       if (socket.readyState === Socket.OPEN) socket.send(frame);
     }
   }
@@ -208,7 +221,7 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
   function broadcastSnapshot(snapshot) {
     const frame = JSON.stringify({ type: 'snapshot', snapshot });
     for (const socket of clients) {
-      if (!hears(socket, snapshot.flat)) continue;
+      if (!hears(socket, snapshot.flat, snapshot.doorId ?? null)) continue;
       if (socket.readyState === Socket.OPEN) socket.send(frame);
     }
   }
@@ -241,6 +254,7 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
       faceDistance: visit.faceDistance ?? null,
       reply: visit.reply ?? '',
       executionId: visit.executionId ?? null,
+      doorId: visit.doorId ?? null,
       parcel: visit.parcel ?? null,
       snapshot: visit.snapshot ?? null,
       decidedAt: visit.decidedAt ?? null,
@@ -309,7 +323,7 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
 
   app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'content-type');
     // An https page (the Vercel build) reaching an API on localhost is a
     // "private network" request: Chrome blocks it unless the preflight agrees.
@@ -333,6 +347,15 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
     });
   });
 
+  // ── the door's live conversation (Mistral Voice Agents) ────────────────────
+
+  mountVoice(app, {
+    apiKey: config.mistralApiKey,
+    decisionTimeoutSeconds: config.decisionTimeoutSeconds,
+    voice: config.voice,
+    client: voiceClient,
+  });
+
   // ── the door starts a visit ───────────────────────────────────────────────
 
   app.post('/arrivals', async (req, res) => {
@@ -341,6 +364,8 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
     const visit = saveVisit({
       id: str(body.visit_id) || newId('visit'),
       flat,
+      // The door page that rang: only its own socket hears this visit.
+      doorId: doorIdFrom(body.door_id),
       residentId: str(body.face?.resident_id),
       // Offline nothing will post the visit later, so it is pending at once.
       status: config.offline ? 'pending_decision' : 'arriving',
@@ -793,6 +818,7 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
       // Who took it, in the apps' words: "resident-phone" or "door".
       source: body.source === 'door' ? 'door' : 'resident-phone',
       by: body.by ?? null,
+      doorId: doorIdFrom(body.door_id),
       at: nowIso(),
       bytes: Math.round((dataUrl.length * 3) / 4),
     };
@@ -844,16 +870,23 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
     const flat = url.searchParams.get('flat');
     // ?scope=door is the building-wide feed; ?flat= is one resident's flat.
     const door = url.searchParams.get('scope') === 'door';
+    // A door page passes its own id; without one, this is the #ledger log.
+    const doorId = door ? doorIdFrom(url.searchParams.get('door')) : null;
     if (!flat && !door) {
       socket.close(1008, 'flat or scope=door is required');
       return;
     }
     socket.scope = door ? 'door' : 'flat';
     socket.flat = door ? null : flat;
+    socket.doorId = doorId;
     socket.isAlive = true;
     clients.add(socket);
 
-    const current = door
+    const current = doorId
+      ? db
+          .prepare("SELECT doc FROM visits WHERE json_extract(doc, '$.doorId') = ? ORDER BY at DESC LIMIT 1")
+          .get(doorId)
+      : door
       ? db.prepare('SELECT doc FROM visits ORDER BY at DESC LIMIT 1').get()
       : db.prepare('SELECT doc FROM visits WHERE flat = ? ORDER BY at DESC LIMIT 1').get(flat);
     if (current) socket.send(JSON.stringify({ type: 'visit', visit: publicVisit(parse(current)) }));

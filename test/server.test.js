@@ -396,6 +396,42 @@ describe('offline API', () => {
     resident.socket.close();
   });
 
+  test('WS /live?scope=door&door= hears only that door page', async () => {
+    const A = 'door-aaaa-1111';
+    const B = 'door-bbbb-2222';
+    const a = await listen(`${api.ws}/live?scope=door&door=${A}`);
+    const b = await listen(`${api.ws}/live?scope=door&door=${B}`);
+    const ledger = await listen(`${api.ws}/live?scope=door`);
+    await settle();
+    assert.equal(a.frames.length, 0, 'a fresh door page gets no old visit on connect');
+    assert.equal(b.frames.length, 0);
+    ledger.frames.length = 0;
+
+    const { data } = await api.post('/arrivals', { flat: '80', door_id: B });
+    // The worker's later updates keep the door id from the arrival.
+    await api.post('/visits', { visit_id: data.visit_id, flat: '80', proposed_reply: 'One moment.' });
+    await api.post('/intercom/speak', { visit_id: data.visit_id, text: 'One moment.' });
+    await api.post(`/visits/${data.visit_id}/decision`, { decision: 'approve' });
+    await api.post('/snapshots', { flat: '80', dataUrl: 'data:image/png;base64,AA', source: 'door', door_id: B });
+    await settle();
+
+    assert.equal(a.frames.length, 0, "door A never hears door B's visit");
+    const mine = b.frames.filter((f) => f.type === 'visit');
+    assert.ok(mine.length >= 3 && mine.every((f) => f.visit.id === data.visit_id && f.visit.doorId === B));
+    assert.equal(mine.at(-1).visit.status, 'approved');
+    assert.ok(mine.some((f) => f.visit.speech?.text === 'One moment.'));
+    assert.ok(b.frames.some((f) => f.type === 'snapshot'));
+    assert.ok(ledger.frames.some((f) => f.visit?.id === data.visit_id), 'the ledger still sees everything');
+
+    // Reconnecting door B gets its own latest visit back; A still gets nothing.
+    const b2 = await listen(`${api.ws}/live?scope=door&door=${B}`);
+    const a2 = await listen(`${api.ws}/live?scope=door&door=${A}`);
+    await settle();
+    assert.equal(b2.frames[0]?.visit.id, data.visit_id);
+    assert.equal(a2.frames.length, 0);
+    for (const s of [a, b, ledger, a2, b2]) s.socket.close();
+  });
+
   test('WS /live without a flat or scope=door is refused with 1008', async () => {
     for (const path of ['/live', '/live?scope=lobby']) {
       const code = await new Promise((resolve) => {

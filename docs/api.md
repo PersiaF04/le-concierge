@@ -34,6 +34,14 @@ npm run dev        # http://localhost:3000, ws://localhost:3000/live?flat=12
 | `MISTRAL_RETRY_BASE_MS` | `600` | First backoff when Mistral answers 429 or 5xx (4 attempts, doubling) |
 | `FACE_MATCH_THRESHOLD` | `0.5` | Largest Euclidean distance that counts as a face match |
 | `SEED_DEMO` | unset | `1` adds the demo resident `res_12_persia` at flat 12 |
+| `VOICE_ID` | `gb_jane_neutral` | The door's voice in the Voice Agent; keep it equal to the worker's `SPEECH_VOICE_ID` so there is one voice everywhere |
+| `VOICE_LLM_MODEL` | `mistral-small-latest` | The Voice Agent's model |
+| `VOICE_STT_MODEL` | `voxtral-mini-transcribe-realtime-3-0` | The Voice Agent's transcription model |
+| `VOICE_TTS_MODEL` | `voxtral-mini-tts-3-0` | The Voice Agent's speech model |
+| `VOICE_LANGUAGE` | `en` | Transcription language (ISO 639-1) |
+| `VOICE_MAX_SESSIONS` | `3` | Most voice sessions open at once |
+| `VOICE_RATE_PER_MINUTE` | `6` | Most `POST /voice/session` calls per IP per minute |
+| `VOICE_SESSION_TTL_SECONDS` | `600` | A session nobody closed stops counting as open after this |
 
 How the other parts find the API:
 
@@ -123,7 +131,9 @@ distance; the nearest one under `FACE_MATCH_THRESHOLD` wins.
 
 #### `POST /arrivals`
 
-The doorbell. Body: `{ flat, snapshot_url, face, audio_url?, visit_id? }`.
+The doorbell. Body: `{ flat, snapshot_url, face, audio_url?, visit_id?, door_id? }`.
+`door_id` is the door page's own id (see `WS /live?scope=door&door=`); it is
+stored on the visit as `doorId` and kept through the worker's later updates.
 Creates the visit, pushes it on `/live`, and starts `visitor-arrival` with input
 `{ visit_id, snapshot_url, flat, audio_url, face, decision_timeout_seconds }`.
 
@@ -248,19 +258,78 @@ event today (UTC) is an arrival.
 
 `200 { day, in: [{ residentId, name, flat, since }], residents, visits, sockets }`.
 
+### Voice (Mistral Voice Agents)
+
+The door's live conversation. The API holds the key and creates the session
+with `client.audio.sessions.create()` from `@mistralai/mistralai`; the door
+joins it over WebRTC with `initSession` from
+`@mistralai/mistralai/extra/voice-agents/browser` and runs the client-side
+tools. Both routes are guarded, as Mistral's docs ask:
+
+- only the door's origins: `https://le-concierge-door.vercel.app`, its Vercel
+  previews (`https://le-concierge-door-*.vercel.app`), and `http://localhost:*`
+  / `http://127.0.0.1:*`; anything else, or no `Origin`, gets `403`;
+- `VOICE_RATE_PER_MINUTE` creates per IP per minute (`429`);
+- at most `VOICE_MAX_SESSIONS` open at once (`429`).
+
+#### `POST /voice/session`
+
+Body: `{ door_id? }` (ignored by the session; it identifies the page). Creates
+a session configured here, not by the page:
+
+- instructions: Le Concierge, a warm, brief British front-desk concierge; greet,
+  ask who they are visiting and their name, never reveal residents' details,
+  use the tools; a welcome message;
+- `llm.model` `VOICE_LLM_MODEL`, `stt` `{ model: VOICE_STT_MODEL, language: VOICE_LANGUAGE }`,
+  `tts` `{ model: VOICE_TTS_MODEL, voiceId: VOICE_ID }`;
+- tools: `ask_resident({ flat, visitor_name, reason? })` with the filler "Let
+  me check with them, one moment." and a timeout of the decision timeout plus
+  15 s; `log_event({ text })`; and `hang_up`.
+
+`201` with the SDK's response: `{ id, participantToken, serverUrl, createdAt, expiresAt, functionTools? }`.
+`403` wrong origin, `429` rate limit or too many open, `503` no `MISTRAL_API_KEY`,
+`502` Mistral refused.
+
+#### `DELETE /voice/session/:id`
+
+Closes a session this API opened (`client.audio.sessions.close({ sessionId })`).
+`204`, or `404` for an id it did not open. Same origin check.
+
+The door's tools, in the browser (`apps/concierge/src/voice.ts`):
+
+- `ask_resident` calls `POST /arrivals` with the flat, a camera snapshot and
+  the page's `door_id`, which starts `visitor-arrival` and pushes the visit
+  to the resident's phone; it then waits on its own
+  `/live?scope=door&door=<id>` socket for that visit id to become `approved`,
+  `declined` or `expired` (at most 70 s) and returns `{ decision }`.
+- `log_event` calls `POST /events` with `{ type: "door.voice", text }`.
+
+If the session cannot be created or connected, the door falls back to the
+record-and-reply pipeline (six seconds of audio to `POST /arrivals`, then the
+workflow's Voxtral wav). The console says which path ran.
+
 ### Live updates
 
-#### `WS /live?flat=12` and `WS /live?scope=door`
+#### `WS /live?flat=12`, `WS /live?scope=door&door=<id>` and `WS /live?scope=door`
 
 A socket subscribes one of two ways, and closes with 1008 if it gives neither:
 
 - `?flat=12`, for residents: on connect it receives the flat's newest visit,
   then a frame every time a visit or photograph for that flat changes, and
   never one for another flat.
-- `?scope=door`, for the door: the building-wide feed. On connect it receives
-  the newest visit in the building, then every visit frame for every flat,
-  including visits that have no flat yet, and every snapshot frame. If both
-  parameters are given, `scope=door` wins.
+- `?scope=door&door=<id>`, for a door page: one-to-one. Each door page makes
+  its own id (`crypto.randomUUID()`, kept in sessionStorage for the tab) and
+  sends it as `door_id` on `POST /arrivals`, `POST /snapshots` and
+  `POST /voice/session`. The socket gets only frames for visits and snapshots
+  carrying that id: status updates, the decision, and the speech or reply. On
+  connect it receives that page's own newest visit, if any. So several open
+  door pages never speak each other's visitors. The page plays a wav only for
+  a visit it rang for in this load, so reloading never replays an old reply.
+- `?scope=door` with no door id: the building-wide feed, for the #ledger log
+  only (it never plays audio). On connect it receives the newest visit in the
+  building, then every visit frame for every flat, including visits that have
+  no flat yet, and every snapshot frame. If both `scope=door` and `flat` are
+  given, `scope=door` wins.
 
 Frames:
 

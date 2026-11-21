@@ -9,30 +9,10 @@
 import type { Decision, Parcel, Resident, Snapshot, SpeechReport, Visit } from "./types";
 
 /**
- * Where the API is, in order of who gets the last word:
- *
- * 1. `?api=https://…` on the URL — so a deployed build can be pointed at a
- *    tunnel or a VPS without being rebuilt (the badge says "live" immediately);
- * 2. `le-concierge:api` in localStorage — the same choice, remembered;
- * 3. `VITE_API_URL` at build time — what the dev servers and CI use.
+ * Where the API is: `VITE_API_URL` at build time, and nothing else. A URL or
+ * localStorage override would let a link point the door at another server.
  */
-const STORED_API_KEY = "le-concierge:api";
-
-function resolveApi(): string {
-  const configured = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
-  try {
-    const fromQuery = new URLSearchParams(window.location.search).get("api");
-    if (fromQuery) {
-      window.localStorage.setItem(STORED_API_KEY, fromQuery);
-      return fromQuery;
-    }
-    return window.localStorage.getItem(STORED_API_KEY) ?? configured;
-  } catch {
-    return configured;
-  }
-}
-
-const API = resolveApi().replace(/\/$/, "");
+const API = ((import.meta.env.VITE_API_URL as string | undefined) ?? "").replace(/\/$/, "");
 /** Without an explicit socket URL, the API's own origin carries the socket. */
 const WS =
   (import.meta.env.VITE_WS_URL as string | undefined)?.replace(/\/$/, "") ||
@@ -103,6 +83,30 @@ async function json<T>(path: string, init?: RequestInit): Promise<T | null> {
   }
 }
 
+/**
+ * This door page's own id, kept for the tab: it is stamped on everything the
+ * door sends, so one page's conversation never plays on another.
+ */
+export const doorId: string = (() => {
+  const key = "le-concierge:door-id";
+  const make = () =>
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `door-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  try {
+    const known = window.sessionStorage.getItem(key);
+    if (known) return known;
+    const id = make();
+    window.sessionStorage.setItem(key, id);
+    return id;
+  } catch {
+    return make();
+  }
+})();
+
+/** The API's base URL, or "" when the door runs on the recorded run. */
+export const apiBase = API;
+
 /** Absolute URL for a visit's wav, or null when the API kept no audio. */
 export function speechAudioUrl(speech: { audioUrl?: string | null } | null | undefined): string | null {
   if (!speech?.audioUrl) return null;
@@ -131,6 +135,8 @@ export async function startArrival(input: {
   /** What the visitor said into the door's microphone, as a URL or data: URL. */
   audio?: string | null;
   face?: Record<string, unknown>;
+  /** The door page that rang, so only its own socket hears the visit. */
+  doorId?: string | null;
 }): Promise<{ visitId: string; executionId: string | null } | null> {
   const created = await json<{ visit_id: string; execution_id: string | null }>("/arrivals", {
     method: "POST",
@@ -139,6 +145,7 @@ export async function startArrival(input: {
       snapshot_url: input.snapshot ?? null,
       audio_url: input.audio ?? null,
       face: input.face ?? {},
+      door_id: input.doorId ?? null,
     }),
   });
   return created ? { visitId: created.visit_id, executionId: created.execution_id } : null;
@@ -153,6 +160,7 @@ export async function publishSnapshot(input: {
   dataUrl: string;
   source?: "resident-phone" | "door";
   by?: string | null;
+  doorId?: string | null;
 }): Promise<boolean> {
   const response = await json<{ stored: boolean }>("/snapshots", {
     method: "POST",
@@ -161,6 +169,7 @@ export async function publishSnapshot(input: {
       dataUrl: input.dataUrl,
       source: input.source ?? "resident-phone",
       by: input.by ?? null,
+      door_id: input.doorId ?? null,
     }),
   });
   return Boolean(response?.stored);
@@ -200,12 +209,13 @@ export async function confirmThatWasMe(residentId: string): Promise<boolean> {
 }
 
 /**
- * Live updates. A resident passes their flat; the door passes `{ scope: "door" }`
- * for the building-wide feed, which carries every flat's visits and snapshots.
+ * Live updates. A resident passes their flat. A door page passes
+ * `{ scope: "door", door: doorId }` and hears only the visits it started; the
+ * #ledger log passes `{ scope: "door" }` for the building-wide feed.
  * Without a socket URL this is a no-op that reports itself as offline.
  */
 export function openLive(
-  target: string | { scope: "door" },
+  target: string | { scope: "door"; door?: string },
   onEvent: (visit: Visit) => void,
   onSnapshot?: (snapshot: Snapshot) => void,
 ): { close: () => void; transport: "ws" | "none" } {
@@ -216,7 +226,12 @@ export function openLive(
 
   const connect = () => {
     if (closed) return;
-    const query = typeof target === "string" ? `flat=${encodeURIComponent(target)}` : "scope=door";
+    const query =
+      typeof target === "string"
+        ? `flat=${encodeURIComponent(target)}`
+        : target.door
+          ? `scope=door&door=${encodeURIComponent(target.door)}`
+          : "scope=door";
     socket = new WebSocket(`${WS}/live?${query}`);
     socket.onmessage = (event) => {
       try {
@@ -252,4 +267,13 @@ export function openLive(
     },
     transport: "ws",
   };
+}
+
+/** One line on the building's timeline, from the door (the voice agent's `log_event`). */
+export async function logDoorEvent(text: string): Promise<boolean> {
+  const response = await json<{ stored: boolean }>("/events", {
+    method: "POST",
+    body: JSON.stringify({ type: "door.voice", text }),
+  });
+  return Boolean(response?.stored);
 }
