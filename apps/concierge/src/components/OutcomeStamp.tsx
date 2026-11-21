@@ -50,11 +50,14 @@ export default function OutcomeStamp({
   visitId,
   status,
   audio,
+  hold = false,
 }: {
   visitId: string | null | undefined;
   status: VisitStatus | null | undefined;
   /** The door's unlocked AudioContext, for the chime. */
   audio: () => AudioContext | null;
+  /** Keep the stamp up (the door is still confirming the answer out loud); it fades once this is false. */
+  hold?: boolean;
 }) {
   const [shown, setShown] = useState<{ key: string; outcome: Outcome } | null>(null);
   /** Visits seen still waiting: only those can stamp, so a page load never replays an old outcome. */
@@ -75,10 +78,10 @@ export default function OutcomeStamp({
   }, [audio, status, visitId]);
 
   useEffect(() => {
-    if (!shown) return;
+    if (!shown || hold) return;
     const timer = setTimeout(() => setShown(null), HOLD_MS + 700);
     return () => clearTimeout(timer);
-  }, [shown]);
+  }, [hold, shown]);
 
   if (!shown) return null;
   return (
