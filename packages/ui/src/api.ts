@@ -128,6 +128,8 @@ export async function fetchPendingVisits(flat?: string): Promise<Visit[]> {
 export async function startArrival(input: {
   flat?: string | null;
   snapshot?: string | null;
+  /** What the visitor said into the door's microphone, as a URL or data: URL. */
+  audio?: string | null;
   face?: Record<string, unknown>;
 }): Promise<{ visitId: string; executionId: string | null } | null> {
   const created = await json<{ visit_id: string; execution_id: string | null }>("/arrivals", {
@@ -135,6 +137,7 @@ export async function startArrival(input: {
     body: JSON.stringify({
       flat: input.flat ?? null,
       snapshot_url: input.snapshot ?? null,
+      audio_url: input.audio ?? null,
       face: input.face ?? {},
     }),
   });
@@ -196,9 +199,13 @@ export async function confirmThatWasMe(residentId: string): Promise<boolean> {
   return Boolean(response?.ok);
 }
 
-/** Live updates. Without a socket URL this is a no-op that reports itself as offline. */
+/**
+ * Live updates. A resident passes their flat; the door passes `{ scope: "door" }`
+ * for the building-wide feed, which carries every flat's visits and snapshots.
+ * Without a socket URL this is a no-op that reports itself as offline.
+ */
 export function openLive(
-  flat: string,
+  target: string | { scope: "door" },
   onEvent: (visit: Visit) => void,
   onSnapshot?: (snapshot: Snapshot) => void,
 ): { close: () => void; transport: "ws" | "none" } {
@@ -209,7 +216,8 @@ export function openLive(
 
   const connect = () => {
     if (closed) return;
-    socket = new WebSocket(`${WS}/live?flat=${encodeURIComponent(flat)}`);
+    const query = typeof target === "string" ? `flat=${encodeURIComponent(target)}` : "scope=door";
+    socket = new WebSocket(`${WS}/live?${query}`);
     socket.onmessage = (event) => {
       try {
         // The API frames every push as { type, visit | snapshot }; a bare visit
