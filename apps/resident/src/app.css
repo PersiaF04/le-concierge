@@ -157,6 +157,7 @@
 .intercom-shot { margin: 0; display: grid; gap: var(--s2); }
 
 .intercom-shot img,
+.intercom-shot video,
 .portrait img,
 .portrait video {
   width: 100%;
