@@ -93,13 +93,25 @@ async def post_visit(visit: dict[str, Any]) -> dict[str, Any]:
     return await api.post_visit(load_settings(), visit)
 
 
-@workflows.activity(start_to_close_timeout=timedelta(seconds=60), retry_policy_max_attempts=3)
+@workflows.activity(name="speak_reply", start_to_close_timeout=timedelta(seconds=60), retry_policy_max_attempts=3)
 async def speak_reply(reply: dict[str, Any]) -> dict[str, Any]:
-    """Voxtral text to speech, played at the door."""
+    """Voxtral text to speech, played at the door.
+
+    Returns the TTS facts (model, voice, audio_bytes) next to the playback
+    result, so an execution output shows whether Voxtral actually ran.
+    """
 
     settings = load_settings()
     audio = await mistral_ai.synthesize_reply(settings, reply["text"])
-    return await api.speak_at_intercom(settings, audio)
+    played = await api.speak_at_intercom(settings, audio)
+    return {
+        "text": audio.get("text"),
+        "model": audio.get("model"),
+        "voice_id": audio.get("voice_id"),
+        "audio_bytes": audio.get("audio_bytes", 0),
+        "played": played.get("played"),
+        "duration_ms": played.get("duration_ms"),
+    }
 
 
 @workflows.activity(name="visitor_log_event", start_to_close_timeout=timedelta(seconds=30), retry_policy_max_attempts=5)

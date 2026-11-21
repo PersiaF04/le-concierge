@@ -82,6 +82,13 @@ Every activity reads `fixtures/*.json` instead of calling the network, so the
 demo works without wifi and tests need no API key. `WORKFLOWS_RECORD=1` saves
 the results of real calls back into `fixtures/` so they can be replayed later.
 
+## What the fixtures hold
+
+Each file is one recorded activity result. Audio payloads are not committed: a
+speech fixture keeps the text, the model, the voice and the size of the audio
+(`audio_bytes`), but `audio_base64` is empty. That is why an execution output
+names the model: it is what tells a real model call from a fixture.
+
 ## Environment
 
 | Variable | Default | Purpose |
