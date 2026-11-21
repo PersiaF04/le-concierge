@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { registerResident, type Resident } from "@le-concierge/ui";
+import { useRef, useState } from "react";
+import type { Resident } from "@le-concierge/ui";
+import { isFlatTaken, saveResident, takenMessage } from "../flats";
 
 /**
  * No sign-in: a flat number is the only thing the intercom ever needs, and the
@@ -7,12 +8,24 @@ import { registerResident, type Resident } from "@le-concierge/ui";
  */
 export default function SetupScreen({ onDone }: { onDone: (resident: Resident) => void }) {
   const [flat, setFlat] = useState("");
+  const current = useRef("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The flat the API said is someone else's; saving waits for another one.
+  const [taken, setTaken] = useState<string | null>(null);
+
+  async function check(value: string) {
+    const cleaned = value.trim();
+    // An answer for a flat the resident has since changed is ignored.
+    if (cleaned && (await isFlatTaken(cleaned)) && current.current.trim() === cleaned) {
+      setTaken(cleaned);
+      setError(takenMessage(cleaned));
+    }
+  }
 
   async function submit(anonymous: boolean) {
     const cleaned = flat.trim();
@@ -20,8 +33,9 @@ export default function SetupScreen({ onDone }: { onDone: (resident: Resident) =
       setError("A flat number is what the door matches on.");
       return;
     }
+    if (taken === cleaned) return;
     setBusy(true);
-    const created = await registerResident({
+    const saved = await saveResident({
       flat: cleaned,
       name: anonymous ? undefined : name.trim() || undefined,
       email: anonymous ? undefined : email.trim() || undefined,
@@ -30,7 +44,12 @@ export default function SetupScreen({ onDone }: { onDone: (resident: Resident) =
       anonymous,
     });
     setBusy(false);
-    onDone(created);
+    if ("taken" in saved) {
+      setTaken(cleaned);
+      setError(takenMessage(cleaned));
+      return;
+    }
+    onDone(saved.resident);
   }
 
   return (
@@ -61,8 +80,11 @@ export default function SetupScreen({ onDone }: { onDone: (resident: Resident) =
             value={flat}
             onChange={(event) => {
               setFlat(event.target.value);
+              current.current = event.target.value;
               setError(null);
+              setTaken(null);
             }}
+            onBlur={(event) => void check(event.target.value)}
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? "flat-error" : undefined}
             required
@@ -108,10 +130,10 @@ export default function SetupScreen({ onDone }: { onDone: (resident: Resident) =
         </div>
 
         <div className="setup-actions">
-          <button type="submit" className="btn" disabled={busy}>
+          <button type="submit" className="btn" disabled={busy || taken !== null}>
             Continue <span className="mono small">→</span>
           </button>
-          <button type="button" className="btn-quiet" disabled={busy} onClick={() => void submit(true)}>
+          <button type="button" className="btn-quiet" disabled={busy || taken !== null} onClick={() => void submit(true)}>
             Continue anonymously
           </button>
         </div>

@@ -105,6 +105,26 @@ keeps no contact details, even if some were sent.
 
 `201 Resident`: `{ id, flat, anonymous, name?, email?, phone?, whatsapp? }`. `400` on missing fields.
 
+A flat holds one resident, named or anonymous. Registering a flat someone else
+already has is `409 { error: "flat_taken", flat }`; the answer never says who.
+
+To edit your details or change flat, send your own `id` in the body. That
+re-registers the same record (`200 Resident`, same `id`): the new flat must be
+free (else `409 flat_taken`), and the old flat is freed. An `id` that matches
+no resident is ignored, so the request is a new registration.
+
+#### `PUT /residents/:id`
+
+Same body and rules as re-registering with `id`: `200 Resident`, `409 flat_taken`,
+`400` on missing fields, `404` for an unknown resident. (CORS allows only
+GET/POST/DELETE, so the browser apps use `POST /residents` with `id`.)
+
+#### `GET /flats/:flat`
+
+Is the flat registered? `200 { flat, taken: boolean }`. Never returns the
+occupant's id, name or details. The resident app calls it when the flat field
+loses focus, and skips it on the recorded run.
+
 #### `POST /residents/:id/confirm`
 
 The resident tapped "that was me". Body is ignored (the app sends `{ thatWasMe: true }`).

@@ -733,14 +733,26 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
 
   // ── residents and their faces ─────────────────────────────────────────────
 
-  app.post('/residents', (req, res) => {
+  /** Whoever else is registered at a flat, or undefined when it is free. */
+  const occupantOf = (flat, exceptId) =>
+    sql.residentsInFlat.all(flat).map(parse).find((resident) => resident.id !== exceptId);
+
+  /**
+   * Register a resident, or re-register one whose own id is given (a flat
+   * change or an edit). A flat holds one resident; a taken flat is 409, and
+   * the answer never says who has it.
+   */
+  const saveResident = (req, res, id) => {
     const body = req.body || {};
     const anonymous = Boolean(body.anonymous);
     const flat = str(body.flat);
     if (!flat) return fail(res, 400, 'flat is required');
     if (!anonymous && !str(body.name)) return fail(res, 400, 'name is required unless anonymous');
+    const existing = id ? getResident(id) : null;
+    if (id && !existing && req.method === 'PUT') return fail(res, 404, 'unknown resident');
+    if (occupantOf(flat, existing?.id)) return res.status(409).json({ error: 'flat_taken', flat });
 
-    const resident = { id: newId(`res_${flat}`), flat, anonymous };
+    const resident = { id: existing?.id ?? newId(`res_${flat}`), flat, anonymous };
     // An anonymous resident leaves no contact details, even if some were sent.
     if (!anonymous) {
       resident.name = String(body.name);
@@ -748,8 +760,27 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
         if (str(body[field])) resident[field] = String(body[field]);
       }
     }
+    if (existing) {
+      // Same row, new flat: the old flat is free again.
+      db.prepare('UPDATE residents SET flat = ?, anonymous = ?, doc = ? WHERE id = ?').run(
+        flat,
+        anonymous ? 1 : 0,
+        JSON.stringify(resident),
+        resident.id,
+      );
+      return res.json(resident);
+    }
     sql.putResident.run(resident.id, flat, anonymous ? 1 : 0, nowIso(), JSON.stringify(resident));
     res.status(201).json(resident);
+  };
+
+  app.post('/residents', (req, res) => saveResident(req, res, str(req.body?.id)));
+  app.put('/residents/:id', (req, res) => saveResident(req, res, req.params.id));
+
+  /** Is a flat registered? Only yes or no: never who. */
+  app.get('/flats/:flat', (req, res) => {
+    const flat = String(req.params.flat).trim();
+    res.json({ flat, taken: Boolean(occupantOf(flat)) });
   });
 
   app.post('/residents/:id/confirm', (req, res) => {
