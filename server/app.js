@@ -818,8 +818,15 @@ export function createApp({ db, config = configFromEnv(), fetch: fetchImpl = glo
   const saveResident = (req, res, id) => {
     const body = req.body || {};
     const anonymous = Boolean(body.anonymous);
-    const flat = str(body.flat);
-    if (!flat) return fail(res, 400, 'flat is required');
+    const rawFlat = str(body.flat);
+    if (!rawFlat) return fail(res, 400, 'flat is required');
+    // Flats are numbers, and must be in the building (BUILDING_FLATS). A named flat such as
+    // "PH" is accepted only when the building's own list names it.
+    const building = config.buildingFlats ?? parseFlats('1-20');
+    const numeric = /^\d{1,4}$/.test(rawFlat);
+    if (!numeric && !building.has(rawFlat)) return fail(res, 400, 'flat must be a number');
+    if (numeric && !building.has(String(Number(rawFlat)))) return fail(res, 400, 'no such flat in this building');
+    const flat = rawFlat;
     if (!anonymous && !str(body.name)) return fail(res, 400, 'name is required unless anonymous');
     const existing = id ? getResident(id) : null;
     if (id && !existing && req.method === 'PUT') return fail(res, 404, 'unknown resident');
